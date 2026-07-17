@@ -1,5 +1,5 @@
 ---
-name: math-modeling-full-pipeline
+name: math-modeling
 description: 数学建模全流程：人机协作完成问题分析→算法求解→论文生成。含AI协作心法、分步工作流、标准算法库、论文生成框架。
 model: opus
 when: 用户需要完成数学建模竞赛题目的建模、求解和论文撰写

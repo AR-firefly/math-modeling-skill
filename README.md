@@ -20,7 +20,7 @@
 
 ```
 math-modeling-skill/
-├── skill.md                    ← Claude Code Skill 入口（全流程指南）
+├── SKILL.md                    ← Claude Code Skill 入口（全流程指南）
 ├── pyproject.toml              ← pip 安装配置
 ├── methodology/                ← 方法论文档（真正的价值）
 │   ├── AI协作心法.md           ← 人机协作：怎么沟通、怎么校验、Karpathy原则

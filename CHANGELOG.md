@@ -6,7 +6,7 @@
 
 ### 规模变化
 
-| 项目       | v1       | v2.0                       |
+| 项目       | v1.0       | v2.0                       |
 | ---------- | -------- | -------------------------- |
 | 文件数     | 23       | 147                        |
 | 算法       | 4 个示例 | 四大类 65 个（带真题出处） |
@@ -42,7 +42,7 @@
 
 **`src/math_modeling/` 核心模块（3 → 13）**
 
-v1 的 3 个（`paper_generator`、`formula_renderer`、`table_builder`）保留，新增 9 个模块，另含 `__init__.py` 包导出。新增的是：
+v1.0 的 3 个（`paper_generator`、`formula_renderer`、`table_builder`）保留，新增 9 个模块，另含 `__init__.py` 包导出。新增的是：
 
 - `data_cleaner.py` 数据清洗：多方案自动对比 + 选择理由
 - `visualizer.py` 可视化：基于数据特征自主选图，300dpi

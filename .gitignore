@@ -7,7 +7,15 @@ build/
 
 # Results (generated output)
 results/
+figures/
+output/
+output_test/
+examples/results/
+examples/_demo_output/
 examples/sample_output/
+
+# 优秀论文库（使用者自备，约 516 MB，不入库）
+references/优秀论文/
 
 # Generated papers
 参赛论文_*.docx
@@ -25,3 +33,7 @@ Thumbs.db
 
 # Temp formula images
 _formula_temp.png
+*.tmp
+
+# Local test cache
+.pytest_cache/

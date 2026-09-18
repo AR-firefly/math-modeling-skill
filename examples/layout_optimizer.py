@@ -51,14 +51,14 @@ def phase2_ga_precise(candidates, stations, weights, deadlines):
     return all_results
 
 
-def optimize(stations, weights, deadlines):
-    """两阶段搜索主流程"""
+def optimize(stations, weights, deadlines, step=GRID_STEP):
+    """两阶段搜索主流程（step: 布局搜索网格步长，默认 5；用于网格无关性检验）"""
     print("=" * 60)
     print("Phase4: 车间布局微调优化")
     print("=" * 60)
 
-    xs = np.arange(-GRID_RANGE, GRID_RANGE + 1, GRID_STEP)
-    ys = np.arange(-GRID_RANGE, GRID_RANGE + 1, GRID_STEP)
+    xs = np.arange(-GRID_RANGE, GRID_RANGE + 1, step)
+    ys = np.arange(-GRID_RANGE, GRID_RANGE + 1, step)
     print(f"搜索网格: {len(xs)}x{len(ys)}={len(xs) * len(ys)} 候选/工位")
 
     print("\n--- Phase 1: TSP 筛选 ---")

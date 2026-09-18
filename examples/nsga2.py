@@ -221,7 +221,9 @@ def optimize(stations, weights, deadlines, seed=cfg.SEED + 100, verbose=True):
     e_arr = np.array(final_o2)[fronts[0]]
     t_norm = (t_arr - t_arr.min()) / (t_arr.max() - t_arr.min() + 1e-9)
     e_norm = (e_arr - e_arr.min()) / (e_arr.max() - e_arr.min() + 1e-9)
-    knee_idx = np.argmax(np.abs(t_norm - e_norm))
+    # 膝点 = 归一化后到理想点 (0,0)（两目标均最小）距离最小的折中点；
+    # 原 argmax(|t-e|) 取的是极端点（极速/节能端），语义错误。
+    knee_idx = np.argmin(np.sqrt(t_norm ** 2 + e_norm ** 2))
 
     return pop, pareto_front, fronts[0], knee_idx, pareto_history
 

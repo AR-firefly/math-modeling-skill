@@ -1,3 +1,9 @@
 numpy>=1.24
+pandas>=1.5
+scipy>=1.9
 matplotlib>=3.7
 python-docx>=0.8.11
+scikit-learn>=1.2
+statsmodels>=0.14
+pymupdf>=1.24
+pytest>=7.0   # 测试依赖（非运行依赖）

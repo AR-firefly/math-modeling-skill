@@ -166,7 +166,7 @@ def plot_path(route, title, save_path):
     ax.legend()
     ax.set_aspect('equal')
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+    fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
 
@@ -187,7 +187,7 @@ def plot_gantt(schedule, title, save_path):
     ax.set_title(title)
     ax.grid(axis='x', alpha=0.3)
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+    fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
 
@@ -206,7 +206,7 @@ def plot_pareto(times, energies, knee_idx, save_path):
     ax.legend()
     ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+    fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
 
@@ -224,7 +224,7 @@ def plot_comparison(labels, values_before, values_after, ylabel, title, save_pat
     ax.legend()
     ax.grid(axis='y', alpha=0.3)
     fig.tight_layout()
-    fig.savefig(save_path, dpi=150)
+    fig.savefig(save_path, dpi=300)
     plt.close(fig)
 
 

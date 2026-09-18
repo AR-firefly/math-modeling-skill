@@ -1,199 +1,221 @@
-# 📖 新手教程
+# 使用教程（TUTORIAL）
 
-这套 skill 不是一个"代码库"——它是**方法论 + 代码 + 写作模板**的组合。本文档教你：
+> 现行阶段、来源、创新、人工声明及交付边界见 `references/执行与交付契约.md`；原细则在当前阶段范围内执行，不代替团队第一问批准或全文独立终审。
 
-- 10 分钟快速体验
-- 在 Claude Code 中调用 `/math-modeling` 技能
-- 用自己的竞赛题跑完整流程
-- 什么时候该读哪篇方法论文档
 
----
+> math-modeling-skill v2.0 从安装到接入真实赛题的完整走法。
 
-## 一、10 分钟快速体验
-
-不用理解所有文件，先跑起来看看它能做什么。
+## 1. 安装
 
 ```bash
-# 1. 进入项目目录
-cd math-modeling-skill-v1.0
-
-# 2. 安装依赖
-pip install -r requirements.txt
-
-# 3. 一键运行（安装+求解+论文生成+汇总）
-python run_all.py
+pip install -r "<SKILL_ROOT绝对路径>/requirements.txt"     # 运行依赖
+pip install -e "<SKILL_ROOT绝对路径>"            # 安装当前仓库（或 pip install -e <仓库路径>）
+python -c "import math_modeling; print('ok')"   # 验证
+pip install -r "<SKILL_ROOT绝对路径>/requirements-dev.txt" # 仅跑测试需要（pytest）
 ```
 
-约 1-2 分钟后你会看到：
+依赖：numpy、pandas、scipy、matplotlib、python-docx、scikit-learn、statsmodels（运行）；pytest 在 requirements-dev.txt（测试）。
 
-- 终端输出：Phase1-4 的求解结果和指标
-- `examples/results/` 目录：各阶段求解结果
-- `examples/sample_output/` 目录：自动生成的示例论文
+## 2. 跑内置 demo（全流程）
 
-**这一步跑的是纯随机数据**，与任何竞赛题目无关。只是为了让你看到从"问题求解"到"论文生成"的全流程长什么样。
+```bash
+cd "<新建的空演示项目绝对路径>"  # 不能在Skill根或覆盖已有产物
+python "<SKILL_ROOT绝对路径>/run_all.py" --demo    # 内置 demo 合成数据跑通全流程
+```
 
----
+自动完成：读题（内置 2 个子问题）→ 生成 demo 数据 → 数据清洗六策略择优 →
+逐问求解（通用占位实现）→ 五样检验诊断 → 灵敏度扫描 →
+论文生成 → verify 双向校验 → 双渲染。
 
-## 二、作为 Claude Code Skill 使用
+> demo 产物写到当前工作目录（`output/`、`results/`、`figures/`，git 忽略）：
+>
+> - `results/results.json` + `results/run_manifest.json` —— 结果与复现清单
+> - `output/paper.tex` + `output/paper.docx` —— 双渲染论文
+> - `output/process_record.md` —— **核心产出物**：完整可核验决策摘要与实验记录（13 节 + 逐问思考轨迹 + 文献借鉴）
+> - `output/risk_points.md` —— 查重风险点清单（人工按清单改写规避）
 
-### 2.1 配置
+> **通用占位说明**：run_all 的内置求解是"数据洞察占位"（结果无真实建模意义，论文会标注）。
+> 通用五样检验是**真实重算诊断**（不达标标 WARN 进 process_record，不假装通过）；
+> 真实赛题由编程手按题型替换为 algorithms/ 对应算法，并换成硬断言五样检验。
 
-在 Claude Code 配置文件（`~/.claude/settings.json`）中添加：
+## 3. 跑四类示例（含五样检验）
+
+```bash
+cd examples
+python main.py                # 优化类（AGV 全流程）
+python 评价_TOPSIS_demo.py    # 评价类
+python 预测_GM11_demo.py      # 预测类
+python 机理_ODE_demo.py       # 机理类
+```
+
+每个示例打印五样检验结论（网格无关/数值收敛/灵敏度/误差分析/对比验证），产物落 `examples/results/`。
+
+## 4. 接入真实赛题
+
+**SKILL_ROOT 只读规则**：本仓库是 Skill 库，不写产物。真实赛题这样用：
+
+```bash
+# ① 切换独立赛题工作目录，使用SKILL_ROOT中入口的绝对路径，不复制孤立入口
+
+# ② 在赛题目录放好：
+#    - 问题.txt （赛题文本，含"问题N/第N问"标题）
+#    - 数据.csv （附件数据）
+#    - meta.json （{"title": "赛题名称"}）
+cd 赛题目录
+python "<SKILL_ROOT绝对路径>/run_all.py" 问题.txt 数据.csv meta.json --solver-module project_solver.py --stage stage1
+```
+
+产物（results/、figures/、output/）全写在赛题工作目录，不污染 skill 仓库。
+
+> **真实赛题 = 第一问实际完整材料先审，批准后完成后续全文**（不是 run_all 开箱出论文）：
+>
+> 1. **编程手 AI 真解**：按题型检索 `algorithms/0X_*/`，把对应算法代码模板替换
+>    项目solve_question/prepare_data回调，套赛题数据**真解**，不修改Skill中的演示函数（结果才有建模意义），并深化五样检验到赛题口径。
+> 2. **AI完成论文内容并显式传入**：真实run_pipeline读取meta.paper完整结构，不会把meta.analysis/assumptions/evaluation自动接线为真实论文。论文各节、模型检验和评价由AI依据实际题目与实验材料撰写。
+>    如需骨架，可单独显式调用 `build_paper_content(results_json, context_meta)` 辅助组织材料；它仅是骨架，须补齐实际全文、删去占位、核验各节，再将完整结构赋给 `meta["paper"]`，同时提供claims和来源证据。不能宣称工具自动生成真实检验结论或模型评价。完整接口见§9。
+> 3. **人审查**：拿 `process_record.md` 回放 AI 思路，对照检查求解、检验、论文数字，可要求模型/计算/假设修改，不能限于润色。
+> 4. **数字冻结**：论文结果性数字按指标/单位/条件对应 `results/`；年份/编号/常量分类核验。改数字**必须重跑更新 results/**，禁止手改论文数字——再做机器映射核验与独立语义审查，不能假定verify能捕获所有解释错误。
+
+> **run_all 内置 demo 是流程演示**：通用求解是占位（物理上无法对任意赛题自动建模），
+> 产物与论文仅演示全流程跑通，**不代表开箱出可用论文**——真实赛题走上面三步。
+
+## 5. 断点恢复
+
+中断后从独立赛题cwd使用入口绝对路径恢复，保留旧过程原文并核对实际阶段/批准/输入版本；Markdown断点文字不代替批准。
+只复用仍有效的阶段证据与冻结输入，缺状态标未知；基础变化后重新审阅，不能从旧日志猜测已通过。
+
+## 6. 读 process_record 定位优化方向（核心产出物）
+
+`output/process_record.md` 13 节——它是"AI 透明工作"的载体：人拿它回放 AI 思路、逐段对照优化。
+
+| 节               | 干什么用                                                                        |
+| ---------------- | ------------------------------------------------------------------------------- |
+| 赛题判断         | 每问题型依据，供核对建模方向                                                    |
+| 数据清洗         | DataCleaner 六策略对比 + 择优理由                                               |
+| 算法取舍         | 对比→选择→验证逻辑链（选了什么、弃了什么、为什么）                              |
+| 文献借鉴         | 逐篇文献：来源 + 参考了它的什么 + 怎么用到本赛题 + 效果（写透级）               |
+| 思考轨迹         | 逐问完整试错链：**怎么想→试了什么→结果如何→在哪撞墙→怎么改进→最终效果**（核心） |
+| 灵敏度           | 参数扰动变化幅度排序                                                            |
+| 不确定点         | 存疑假设/待定参数/影响多大                                                      |
+| 可优化方向       | 换算法/加数据/深化论证                                                          |
+| 人工审核方向     | **必须人才能审查的点**（[ ] 清单）                                              |
+| 数值归因         | 论文数字 ↔ results 字段 ↔ 代码出处                                              |
+| 论文参考与风险点 | 参考了哪些优秀论文、为什么这么写、查重风险点清单摘要、参考文献来源              |
+| 复现             | run_manifest.json 路径（seed + SHA-256）                                        |
+| 断点             | 当前阶段 / 下一步（断点恢复用）                                                 |
+
+**优化论文的关键动作**：对照"思考轨迹（撞墙→改进） + 风险点 + 可优化方向 + 行动建议 + 人工审核方向"，
+逐项解决 AI 自己指出的风险与待确认点，深化论证，然后重跑更新结果与论文。
+
+## 7. 测试
+
+```bash
+python -m pytest tests/ -v
+```
+
+覆盖：数据清洗、可视化、数值校验、灵敏度、算法库全量（compile + demo exec）。
+
+## 8. 真实两阶段调用补充
+
+在独立项目cwd提供项目solver模块。模块导出 solve_question(question, df, seed, qi, rec) 和 prepare_data(df, rec)，按实际题目实现，不以演示替代。第一阶段只计算Q1并交第一问审阅报告；真实团队批准及独立审查记录完成后，才使用相同入口 --stage stage2 运行依赖后续求解。精确报告/批准字段按当前workflow接口填写真实证据，不能伪造通过。
+
+读取、数据清洗、求解、验证、绘图、论文与自审职责保留，实际赛题由AI实现完整模型与章节，不靠通用骨架自动解决。需要修改基础决策时重新提交团队。所有run_all调用（包括demo）必须独立cwd，demo不能覆盖已有output/results/figures，工具self-test只在独立临时副本运行。
+
+完成判定要有最终可编辑论文、实际渲染检查、代码/数据/图复现证据、真实引用、13节500行过程记录、风险清单、双方终审记录及独立人工待办；运行命令成功不等于AI终审通过或团队可提交。
+
+## 9. 项目模块、meta与批准接口
+
+以下描述实际接口；计算与报告必须来自当前赛题，不能把说明文字或示例值当作完成证据。
+
+### 项目模块
+
+`project_solver.py` 导出：
+
+| 接口 | 必须返回/完成 |
+| --- | --- |
+| prepare_data(df, rec) | 按实际题目清洗后的pandas.DataFrame，真实决策写rec |
+| solve_question(question, df, seed, qi, rec) | dict，公开结果键以对应Qn_或Qn.开头，数值/数组为实际结果 |
+
+第一问返回dict另含 `_basis`（非空的实质模型/假设/算法依据）、`_basis_files`（第一问实际代码/数据依赖路径列表）、`_review`（下列12字段）和可选 `_code_map`（结果字段到代码位置）。别把会独立变化的Q2文件捆绑进第一问依据。
+
+`_review` 必须有 whole_problem、dependencies、assumptions、model、algorithm、results、interpretation、validation、sensitivity、alternatives、uncertainties、downstream，各字段写真实说明并链接实际验证/论文/图表资料。缺项会标待补，不算第一问完成。
+
+### 第一阶段meta.json
 
 ```json
 {
-  "skills": {
-    "math-modeling": "/path/to/math-modeling-skill-v1.0"
-  }
+  "title": "赛题名称",
+  "read_csv_options": {"dtype": {"编号": "string"}}
 }
 ```
 
-把路径换成你机器上的实际路径，比如 Windows 下：
+dtype字段仅在题目确实有该列时保留或按实际列名修改。原CSV可显式指定类型；prepare返回数据冻结到results/df_clean.json（类型保真的权威输入）并导出CSV供阅读，两者哈希均检查。第二阶段从冻结JSON读数据，不重新运行prepare。
+
+### 独立审查与真实批准
+
+独立Agent产生项目内 `output/q1_review.json`，接口如下（待审格式不能取得批准；只有实际独审通过后才填写passed、空问题列表及真实证据）：
 
 ```json
 {
-  "skills": {
-    "math-modeling": "C:\\Users\\YourName\\math-modeling-skill-v1.0"
-  }
+  "decision": "pending",
+  "open_issues": ["由独立审查者记录实际问题"],
+  "reviewer": "独立审查者标识",
+  "evidence": ["docs/q1_review_evidence.md"],
+  "q1_fingerprint": "当前状态的q1_fingerprint值"
 }
 ```
 
-### 2.2 调用
+指纹通过 `q1_fingerprint(state)` 取得，state读取当前output/workflow_state.json。审查证据须真实存在且匹配版本。团队明确批准后主Agent才记录真实原文与消息出处；以下代码读取团队已提供的文件，不生成批准：
 
-在 Claude Code 对话中输入：
-
-```
-/math-modeling
-```
-
-Skill 加载后，Claude 会按照 skill.md 的 9 阶段流程与你协作：
-
-```
-Phase 0: 问题理解 → 先确认题目类型和规模
-Phase 1: 头脑风暴 → AI 给 2-3 种技术路线
-Phase 2: 制定计划 → 出详细计划，你审核
-Phase 3: 资源调查 → 检查已有代码/技能
-Phase 4: 实现求解 → 按 examples/ 模板写代码
-Phase 5: 简化优化 → 审查代码质量
-Phase 6: 验证确认 → 跑真实数据看输出
-Phase 7: 论文生成 → 配置 PaperConfig → 生成论文
-Phase 8: 自评验收 → 对照写作心法检查
+```python
+import json
+from pathlib import Path
+from math_modeling.workflow import record_team_approval
+project = Path.cwd()
+record_team_approval(
+    project,
+    (project / "docs/team_approval.txt").read_text(encoding="utf-8"),
+    (project / "docs/team_message_reference.txt").read_text(encoding="utf-8"),
+    project / "output/q1_review.json",
+)
 ```
 
-**关键点：** 这不是 AI 全程自动跑——每个阶段需要你审核确认。Phase 0-2 是聊天讨论阶段，Phase 4 之后才是写代码阶段。
+该函数是记录与一致性守卫，不认证用户身份，不能由AI自行编造文本或文件。基础变化重新审阅；标题样式等明确排版变化可保留，内容含义不明则复核。团队批准后命令将 `--stage stage1` 改为 `--stage stage2`。
 
-### 2.3 用 skill 跑示例
+### 第二阶段meta及完整论文
 
-进入 Claude Code 后：
+meta保留title，增加 `q1_basis`（与第一问返回_basis完全一致）。论文手将实际完整PAPER_STRUCT写入meta.paper：meta.title、abstract字符串列表、sections列表（每节title、paras、formulas、tables、images）、references字符串列表、ai_declaration空字符串。表含caption/headers/rows/notes，图含path/caption/notes；必要符号、单位和条件写入内容，不以占位说明冒充正文。
 
-```
-/math-modeling
+meta同时提供：
 
-我想先跑一遍示例数据，看看流程怎么走。
-```
+- `claims`：实际结果声明列表，含path、text、label、value、unit、expected_unit；派生量按实际计算给scale/offset和derivation。标签、单位及数字必须对应实际论文。
+- `non_result_numbers`：每项text、kind（year/index/constant/citation/unit/input）、reason，解释非结果数字，不用它掩盖未映射的实验结果。
+- `source_evidence`：与参考文献同序，每项status、publisher、original_url、purpose、original_source、verification_note；真实核验后才能填verified与true。
+- `selected_papers`：相对SKILL_ROOT/references/优秀论文的已选UTF-8文本文件路径列表，不允许越界或扫描占位文本；实际阅读全文及页码证据另记，文本相似检查不等于全文质量审查。
 
-Claude 会引导你走一遍完整流程。熟悉之后再换成自己的赛题。
+没有meta.paper只保存计算待审状态，不能声称全文完成。pipeline最多生成final_awaiting_review；完成全部质量改进、渲染、复现和固定双审后再交付。AI声明/详情正文保持空白，人工事项不由AI伪造完成。
 
----
+## 10. 全文final_review.json与最终审计
 
-## 三、套用自己的竞赛题
+只有完成真实全文、渲染、复现和主Agent/独立Agent审查后才形成最终结论。先以待审状态建立 `output/final_review.json`，各项字段如下；不要复制“passed”模板冒充已经审过。
 
-这是你拿到一套新赛题后的标准操作流程：
+| 字段 | 内容 |
+| --- | --- |
+| schema_version | 整数1 |
+| criteria_file | 固定为references/终审运行检查表.md（项目相对路径） |
+| criteria_sha256 | 项目内该标准文件的实际SHA-256，必须与第一问首次冻结的workflow状态一致 |
+| self_review | reviewer、decision、open_issues、evidence四字段；主Agent实际自审记录 |
+| independent_review | 同上，由另一位独立审查者提供，reviewer必须与主Agent不同 |
+| artifact_hashes | 项目相对文件路径到实际SHA-256的映射 |
 
-### Step 1：读题和分类
+两份review中的decision未审或未通过时保持pending/failed，并记录真实open_issues；只有实际审查全部通过才记passed及空问题列表。evidence为非空项目相对路径列表，指向实际审查证据文件；不能只写“已通过”而无逐项事实。
 
-用 /math-modeling 的 Phase 0-1，先和 AI 讨论：
+artifact_hashes必须包括：output/paper.json、paper.tex、paper.docx、claims.json、source_evidence.json、process_record.md、workflow_state.json，results/results.json，figures/figures_manifest.json；若存在output/non_result_numbers.json也纳入。逐图图片、绘图脚本、数据入口，以及self_review和independent_review两方列出的所有证据文件，同样必须纳入真实哈希。所有路径须在项目内且文件存在。final_review.json自身不作自哈希；criteria由criteria_sha256及首次冻结基线双重核对。哈希只证明文件版本一致，不能证明内容正确。
 
-- 这是哪种题型？优化/预测/评价/图论？
-- 数据规模多大？有哪些约束条件？
-- 读完 `methodology/算法选型指南.md`，看哪种算法适合
-
-### Step 2：配置参数
-
-打开 `examples/config.py`，把题目中的坐标、参数、任务数据填进去。文件里有注释说明每一行是干什么的。
-
-### Step 3：调整算法（如需要）
-
-`examples/` 下有 4 个阶段的示例算法。你可以：
-
-- 直接复用（如果问题匹配）
-- 替换成自己的算法（保持输入输出格式一致即可）
-- 增减阶段（不是所有题目都需要 4 个阶段）
-
-### Step 4：运行
+在完整产物准备好后，从独立赛题cwd执行：
 
 ```bash
-cd examples && python main.py
+python "<SKILL_ROOT绝对路径>/scripts/gate_audit.py" --project "<赛题项目绝对路径>"
 ```
 
-运行结果会存到 `examples/results/`。
-
-### Step 5：生成论文
-
-配好 `PaperConfig`（学校名、标题等信息），然后：
-
-```bash
-python ../src/math_modeling/paper_generator.py
-```
-
-生成的论文在 `examples/sample_output/`。
-
-### Step 6：按写作规范审查
-
-打开 `methodology/写作心法.md`，逐项检查论文质量：
-
-- 摘要是不是"总分总"结构？
-- 模型描述有没有公式和变量定义？
-- 图表有没有引用说明？
-- 结果有没有灵敏度分析？
-
----
-
-## 四、方法论阅读路线图
-
-4 篇方法论文档不要一次性读完——按阶段读：
-
-| 当前阶段             | 该读什么                      | 为什么读                                           |
-| -------------------- | ----------------------------- | -------------------------------------------------- |
-| 第一次接触这套 skill | `methodology/AI协作心法.md`   | 理解人机怎么分工、安全边界在哪、怎么避免被 AI 带跑 |
-| 准备开始解题         | `methodology/分步工作流.md`   | 知道 8 个阶段谁做什么、输入输出是什么              |
-| 需要选算法           | `methodology/算法选型指南.md` | 决策树告诉你什么时候用遗传算法、什么时候用模拟退火 |
-| 正在写论文           | `methodology/写作心法.md`     | 标题怎么写、摘要怎么搭、模型怎么描述——直接套模板   |
-
-简单说：**协作心法先读（一次）、分步工作流做时翻（反复）、算法选型遇问题查（按需）、写作心法写完审（最终关）。**
-
----
-
-## 五、FAQ
-
-### Q：依赖装不上怎么办？
-
-```bash
-pip install -r requirements.txt
-```
-
-如果报错，检查 Python 版本 >= 3.9。如果是 Windows 上 numpy 装不上，试试：
-
-```bash
-pip install numpy --only-binary=:all:
-```
-
-### Q：跑出来的结果不对？
-
-先用随机数据跑一遍确认环境正常。如果是用自己的数据，检查 `config.py` 里的参数是否正确。
-
-### Q：我想用自己的算法替换示例代码？
-
-可以。保持输入输出接口一致就行——`main.py` 会依次调用各阶段的 solver，每个 solver 读 config 写 results，互不依赖。你只需要改对应的 solver 文件。
-
-### Q：这个 skill 适合美赛还是国赛？
-
-都适合。美赛侧重模型创新和英文写作，国赛侧重求解精度和论文规范——方法论文档覆盖的是两者通用的部分。美赛用户额外注意 `methodology/写作心法.md` 里的摘要和结构规范。
-
-### Q：怎么提交最终的论文？
-
-`paper_generator.py` 生成的是 `.docx` 文件。直接提交即可。如果需要转 PDF，在 Word 里另存为 PDF，或使用工具转换。
-
----
-
-📖 回到 [README](README.md)
+这是全文可机检审计，不能作为第一问阶段前置条件。它要求真实第二阶段和有效第一问批准，核对实际交付物、两方审查证据及冻结标准。任何被审文件改变，都必须按实际影响重新审查并更新真实哈希；不能仅重算哈希消除问题。审计返回machine_checks_only，即使机器通过仍不代表评委必给国奖或团队人工事项完成。

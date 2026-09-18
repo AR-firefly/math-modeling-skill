@@ -42,12 +42,22 @@ class TableBuilder:
 
     def build(self, caption=None, caption_font_size=10):
         """
-        构建表格并插入文档。
+        构建表格并插入文档（表题在表上，对齐国赛规范"表题在上"）。
 
         Args:
-            caption: 表题文字
+            caption: 表题文字（在表格之前插入）
             caption_font_size: 表题字号
         """
+        # 表题在表上（国赛规范）
+        if caption:
+            cap = self.doc.add_paragraph()
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cap.paragraph_format.first_line_indent = Cm(0)
+            r = cap.add_run(caption)
+            r.font.size = Pt(caption_font_size)
+            r.font.name = self.font_name
+            r._element.rPr.rFonts.set(qn('w:eastAsia'), self.font_name)
+
         table = self.doc.add_table(rows=1 + len(self.rows),
                                    cols=len(self.headers))
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -79,14 +89,5 @@ class TableBuilder:
                 r.font.name = self.font_name
                 r._element.rPr.rFonts.set(qn('w:eastAsia'), self.font_name)
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-        if caption:
-            cap = self.doc.add_paragraph()
-            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            cap.paragraph_format.first_line_indent = Cm(0)
-            r = cap.add_run(caption)
-            r.font.size = Pt(caption_font_size)
-            r.font.name = self.font_name
-            r._element.rPr.rFonts.set(qn('w:eastAsia'), self.font_name)
 
         return table

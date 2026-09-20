@@ -233,6 +233,8 @@ https://github.com/AR-firefly/math-modeling-skill/archive/refs/tags/v2.0.zip
 
 ## 致谢
 
+感谢**我的老师**为我们培训，给了我很多思路上的启发，同时也感谢**与我并肩作战的队友**，感谢他们的努力付出。
+
 本 skill 部分设计**借鉴/改编**自 [Yuan1z0825/nature-skills](https://github.com/Yuan1z0825/nature-skills)（**Apache-2.0 license**，作者袁一哲等）：
 
 - **图契约**：画图前先写"核心结论 + 证据链 + 图类型 + 编号"（`references/图契约.md`、`Visualizer.register_figure`）

@@ -1,6 +1,6 @@
 # NOTICE
 
-本仓库（math-modeling-skill）部分内容**借鉴/改编**自
+本仓库（math-modeling-skill-v3.0）部分内容**借鉴/改编**自
 [Yuan1z0825/nature-skills](https://github.com/Yuan1z0825/nature-skills)
 （**Apache-2.0 license**，作者：袁一哲 Yuan1z0825、马昕瑞、胡彬 等）。
 

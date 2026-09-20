@@ -17,9 +17,15 @@ examples/sample_output/
 # 优秀论文库（使用者自备，约 516 MB，不入库）
 references/优秀论文/
 
-# Generated papers
-参赛论文_*.docx
-示例论文.docx
+# 本地删除备份（历史快照，不进仓库）
+_deleted_backup/
+
+# Generated papers (v3.0：只出 LaTeX，Word 产物已废弃)
+# 注：论文在赛题工作目录生成，不在 skill 目录；此处仅作误置预防。
+参赛论文_*.tex
+参赛论文_*.pdf
+示例论文.tex
+示例论文.pdf
 
 # IDE
 .idea/

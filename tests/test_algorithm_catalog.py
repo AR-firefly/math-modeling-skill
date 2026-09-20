@@ -1,6 +1,6 @@
 """算法库 .md 代码块全量校验：语法 + demo 可执行（seed=42 自包含）。
 
-用途：算法目录写完后立即跑，不等最后才暴露算法代码 bug。
+用途：Task 3 完成后立即跑，不等 Task 9 才暴露算法代码 bug。
 覆盖：algorithms/ 下所有 .md 的所有 ```python 代码块。
 规则：demo 必须自包含（numpy 合成 seed=42）、含 assert、禁止 plt.show()/input()。
 """

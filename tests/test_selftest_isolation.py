@@ -26,4 +26,6 @@ def test_selftest_uses_copied_code_and_separate_demo_project(tmp_path, monkeypat
 
     monkeypatch.setattr(audit.subprocess, "run", inspect_run)
     assert audit.self_test()["passed"]
-    assert len(calls) == 7
+    # v3.0（C16）：命令集 7 → 8 条，新增 stage_gate.py --self-test（否则它自己无回归）
+    assert len(calls) == 8
+    assert any(call[0][-2:] == ["scripts/stage_gate.py", "--self-test"] for call in calls)

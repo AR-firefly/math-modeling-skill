@@ -1,6 +1,23 @@
 #!/usr/bin/env python3
 """Read-only project artifact audit. Use --project DIR, or isolated --self-test.
 Machine checks never replace independent semantic review or award judgment.
+
+v3.0 增补（C3/C5/C16，见 references/作图契约.md §七）：
+
+- **manifest 状态机机检**（`validate_figure_evidence`）：`reproduced` 必须有
+  `artifact_hash = sha256(脚本 + 数据入口 + PNG)` 且与磁盘现算值一致（磁盘变了而 manifest 没
+  重新生成 → FAIL）；`verified` 还须 `reviewer` 非空且不等于作图 Agent、`evidence_hashes`
+  逐一可核、`criteria_sha256` 匹配冻结基线。
+- **哈希外部锚**：`artifact_hash` 必须同时记入审查侧 `docs/log_审查.md`。作图 Agent 单方面
+  重写 manifest 的状态或哈希 → 与审查侧记录不符 → FAIL。
+- **final 阶段二次调用 `stage_gate.py`** 作交叉确认（stage_gate 只读产物，不碰审批链）。
+
+⚠️ **诚实说明**（体例同 C3/C4）：审查 Agent 与作图 Agent 都是 AI 扮演，
+「`reviewer` 非空」本身**不构成独立性的证明**。真独立性来自**证据哈希外部锚**
+（审查侧独立记录 `docs/log_审查.md`）+ **`criteria_sha256` 绑定冻结基线**。
+哈希能防「手改状态」，**不能防「数据编造」**——若编程手落盘的 results 本身就是编的，
+哈希照样一致；后一条只能靠 `stage_gate.py` 的插桩比对（验收③：证明"画进图里的数 =
+results 里的数"）与人工复核。
 """
 import argparse
 import json
@@ -15,6 +32,29 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+# 状态机四态（作图契约 §七）；缺省从严：未知状态直接 FAIL，不得当成通过。
+FIGURE_STATUSES = ("incomplete", "pending_verification", "reproduced", "verified")
+# 作图 Agent 的角色标识（归一化后比较：去空白/下划线/连字符 + 小写）
+FIGURE_AGENT_ROLES = ("作图agent", "绘图agent", "绘制agent", "figureagent", "figureauthor")
+REVIEW_LOG = "docs/log_审查.md"
+
+
+def normalize_manifest_path(value):
+    """manifest 内路径一律正斜杠（作图契约 §二）；反斜杠登记值在此归一化。"""
+    return value.replace("\\", "/").strip() if isinstance(value, str) else value
+
+
+def is_figure_agent(reviewer):
+    """`reviewer` 是否就是作图 Agent 本人（防自证）。"""
+    if not isinstance(reviewer, str):
+        return False
+    return re.sub(r"[\s_\-]", "", reviewer).lower() in FIGURE_AGENT_ROLES
+
+
+def _sha256(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
 
 def _project_file(project, name):
     if not isinstance(name, str) or not name or Path(name).is_absolute():
@@ -23,6 +63,129 @@ def _project_file(project, name):
     if project not in path.parents or not path.is_file():
         raise ValueError(f"Missing or outside-project evidence: {name}")
     return path
+
+
+def _figure_artifact_paths(project, figure):
+    """按契约路径语义解析图的三元组（file 相对 figures/；script/data_entrypoint 相对项目根）。"""
+    paths = {}
+    for key, prefix in (("script", ""), ("data_entrypoint", ""), ("file", "figures")):
+        value = normalize_manifest_path(figure.get(key))
+        try:
+            relative = (Path(prefix) / value).as_posix() if value else ""
+            paths[key] = _project_file(project, relative)
+        except (ValueError, OSError):
+            paths[key] = None
+    return paths
+
+
+def validate_figure_evidence(project, figure, *, review_log_text=None, frozen_criteria_hash=None):
+    """C3 状态机机检：reproduced 的 artifact_hash、verified 的独立审查证据 + 哈希外部锚。
+
+    诚实说明见模块 docstring：哈希外部锚 + 冻结基线能防「手改状态」，防不了「数据编造」。
+    """
+    import hashlib
+
+    project = Path(project).resolve()
+    issues = []
+    status = figure.get("evidence_status")
+    if status not in FIGURE_STATUSES:
+        return [f"unknown evidence_status: {status!r}（只认 {list(FIGURE_STATUSES)}）"]
+    if status in ("incomplete", "pending_verification"):
+        return issues  # 未到 reproduced，无哈希可核；由"必须 verified"的总判据兜底
+
+    paths = _figure_artifact_paths(project, figure)
+    missing = [key for key, path in paths.items() if path is None]
+    if missing:
+        return [f"不能核验 {status}：三元组缺件 {missing}（放错目录也算缺件）"]
+
+    from math_modeling.visualizer import figure_artifact_hash
+    recomputed = figure_artifact_hash(paths["script"], paths["file"],
+                                      paths["data_entrypoint"] if figure.get("data_entrypoint") else None)
+    recorded = figure.get("artifact_hash")
+    if not isinstance(recorded, str) or not re.fullmatch(r"[0-9a-f]{64}", recorded):
+        issues.append("reproduced/verified 缺合法 artifact_hash（sha256 十六进制 64 位）")
+    elif recomputed is None:
+        issues.append("artifact_hash 无法核验：三元组存在不可读文件")
+    elif recorded != recomputed:
+        issues.append(
+            "artifact_hash 与磁盘三元组不符：脚本/数据入口/PNG 已变化而 manifest 未重新生成，"
+            "状态应退回 pending_verification")
+
+    if status != "verified":
+        return issues  # reproduced 只核哈希；verified 才核审查证据
+
+    # —— verified 强校验（只由审查 Agent 写）——
+    reviewer = figure.get("reviewer")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        issues.append("verified 缺 reviewer")
+    elif is_figure_agent(reviewer):
+        issues.append("verified 的 reviewer 就是作图 Agent 本人，不构成独立审查")
+    if isinstance(figure.get("author"), str) and figure.get("author").strip() == (
+            reviewer or "").strip():
+        issues.append("verified 的 reviewer 与 author 相同，不构成独立审查")
+
+    evidence_hashes = figure.get("evidence_hashes")
+    if not isinstance(evidence_hashes, dict) or not evidence_hashes:
+        issues.append("verified 缺 evidence_hashes（证据文件逐一 hash）")
+    else:
+        for name, digest in evidence_hashes.items():
+            try:
+                path = _project_file(project, normalize_manifest_path(name))
+                if _sha256(path) != digest:
+                    issues.append(f"审查证据哈希不符或已过期：{name}")
+            except (ValueError, OSError) as exc:
+                issues.append(f"审查证据不可核：{exc}")
+
+    criteria_hash = figure.get("criteria_sha256")
+    if not isinstance(criteria_hash, str) or not criteria_hash:
+        issues.append("verified 缺 criteria_sha256（须绑定冻结的终审标准基线）")
+    else:
+        criteria = project / "references/终审运行检查表.md"
+        if not criteria.is_file():
+            issues.append("verified 无法核验 criteria_sha256：references/终审运行检查表.md 不存在")
+        elif hashlib.sha256(criteria.read_bytes()).hexdigest() != criteria_hash:
+            issues.append("verified 的 criteria_sha256 与当前终审标准不符")
+        elif frozen_criteria_hash is not None and criteria_hash != frozen_criteria_hash:
+            issues.append("verified 的 criteria_sha256 不匹配冻结基线（冻结标准被绕过）")
+
+    # —— 哈希外部锚：artifact_hash 同时记入审查侧 docs/log_审查.md ——
+    if isinstance(recorded, str) and recorded:
+        if review_log_text is None:
+            issues.append(f"verified 缺哈希外部锚：{REVIEW_LOG} 不存在，无法与审查侧记录比对")
+        elif recorded not in review_log_text:
+            issues.append(
+                f"缺哈希外部锚：artifact_hash 未出现在 {REVIEW_LOG}——作图侧单方面重写状态或哈希，"
+                "与审查侧记录不符")
+    return issues
+
+
+def stage_gate_cross_check(project, stage="final"):
+    """C16：final 阶段二次调用 stage_gate.py 作交叉确认。
+
+    stage_gate 只读产物、不碰审批链（不调用 record_team_approval/set_status/publish_q1）。
+    脚本缺失时如实报告"未执行交叉确认"，不假装已核对。
+
+    传 `--no-run` 是刻意的：本文件对外承诺 "Read-only project artifact audit"，
+    而 stage_gate 的默认 run_figures=True 会**子进程重跑绘图脚本**（在项目内重写 PNG）。
+    为守住只读契约，交叉确认只覆盖落盘/AST/契约/PNG 存在性这类只读可判项；
+    「空 cwd 独立跑通 / 运行时守卫 / 插桩比对」由用户按作图契约 §九 直接调 stage_gate 完成。
+    """
+    script = ROOT / "scripts/stage_gate.py"
+    if not script.is_file():
+        return ["stage_gate.py 缺失：final 阶段交叉确认未执行（不得视为通过）"]
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(ROOT), str(ROOT / "src"))),
+               PYTHONDONTWRITEBYTECODE="1")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-B", str(script), "--project", str(project),
+             "--stage", stage, "--no-run"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, env=env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"stage_gate 交叉确认无法执行：{type(exc).__name__}: {exc}"]
+    if result.returncode != 0:
+        detail = (result.stdout + result.stderr).strip().replace("\n", " ")[-800:]
+        return [f"stage_gate({stage}) 交叉确认未通过：{detail}"]
+    return []
 
 
 def validate_figure_source(figure):
@@ -40,7 +203,7 @@ def validate_figure_source(figure):
             issues.append("Figure source must identify an original official HTTP(S) document")
         if any(host == domain or host.endswith("." + domain) for domain in excluded):
             issues.append("Excluded figure documentation source: " + host)
-        if host in ("github.com", "raw.githubusercontent.com") and "/prompt-library" in parsed.path:
+        if host in ("github.com", "raw.githubusercontent.com") and "AR-firefly/prompt-library" in parsed.path:
             issues.append("TRIZ exception is not plotting API documentation")
     fields = ("publisher", "original_url", "purpose", "verification_note")
     if (not isinstance(evidence, dict) or evidence.get("status") != "verified"
@@ -130,7 +293,7 @@ def tex_readable_body(tex):
     return text
 
 
-def verify_artifact_numbers(project, paper, doc_body, tex):
+def verify_artifact_numbers(project, paper, tex_body, tex):
     """Verify both mapped and unclassified numbers in structured and actual text."""
     from math_modeling.verify import verify_paper_numbers
     project = Path(project)
@@ -147,7 +310,7 @@ def verify_artifact_numbers(project, paper, doc_body, tex):
     if not isinstance(exceptions, list):
         return ["non_result_numbers.json must contain a list"]
     issues = []
-    bodies = (("JSON", flatten(paper)), ("DOCX", doc_body), ("TeX", tex_readable_body(tex)))
+    bodies = (("JSON", flatten(paper)), ("TeX", tex_readable_body(tex)))
     for label, body in bodies:
         # A classification can concern a title or other text appearing only in a
         # rendered artifact. Validate it in the applicable representation.
@@ -172,7 +335,7 @@ def audit_project(project):
     if project == ROOT or ROOT in project.parents:
         issues.append("SKILL_ROOT cannot be audited as a contest project")
         return report
-    required = ["output/paper.json", "output/paper.tex", "output/paper.docx",
+    required = ["output/paper.json", "output/paper.tex",
                 "output/claims.json", "output/source_evidence.json", "output/process_record.md",
                 "output/final_review.json", "results/results.json", "figures/figures_manifest.json",
                 "output/workflow_state.json"]
@@ -211,28 +374,17 @@ def audit_project(project):
             sources = []
         issues.extend(validate_references(paper.get("references", []), source_evidence=sources))
         tex = (project / "output/paper.tex").read_text(encoding="utf-8")
-        from docx import Document
-        doc = Document(project / "output/paper.docx")
-        paragraphs = [p.text for p in doc.paragraphs]
-        if "人工智能使用声明" not in paragraphs or "参考文献" not in paragraphs:
-            issues.append("DOCX missing human declaration or references heading")
-        else:
-            start, end = paragraphs.index("人工智能使用声明"), paragraphs.index("参考文献")
-            if start >= end or any(t.strip() for t in paragraphs[start+1:end]):
-                issues.append("DOCX declaration must be blank before references")
         declaration = re.search(r"\\section\{人工智能使用声明\}(.*?)\\section\{参考文献\}", tex, re.S)
         if not declaration or re.sub(r"\\vspace\{[^}]*\}|\s+", "", declaration.group(1)):
             issues.append("TeX declaration must be blank before references")
-        # Inspect actual rendered artifacts, never synthesize prose from results.
-        doc_body = "\n".join(paragraphs[:paragraphs.index("人工智能使用声明")] if "人工智能使用声明" in paragraphs else paragraphs)
-        doc_body += "\n" + "\n".join(" ".join(c.text for c in row.cells) for table in doc.tables for row in table.rows)
+        # Inspect the actual rendered artifact, never synthesize prose from results.
         tex_body = tex.split(r"\section{人工智能使用声明}")[0]
         tex_body = re.sub(r"\\([_%&#{}])", r"\1", tex_body)
         if not isinstance(claims, list) or not claims:
             issues.append("Missing nonempty result claim mapping")
         else:
-            issues.extend(verify_artifact_numbers(project, paper, doc_body, tex))
-            issues.extend(verify_citations(doc_body, paper.get("references", [])))
+            issues.extend(verify_artifact_numbers(project, paper, tex_body, tex))
+            issues.extend(verify_citations(tex_body, paper.get("references", [])))
         if not isinstance(figures, list):
             raise ValueError("figure manifest must be a list")
         if figures or any(section.get("images") for section in paper.get("sections", [])):
@@ -240,21 +392,29 @@ def audit_project(project):
         hashed_artifacts = [name for name in required if name != "output/final_review.json"]
         if (project / "output/non_result_numbers.json").is_file():
             hashed_artifacts.append("output/non_result_numbers.json")
+        # 哈希外部锚：审查侧 docs/log_审查.md 不存在即无法比对，如实报缺失（不作静默放过）
+        review_log = project / REVIEW_LOG
+        review_log_text = review_log.read_text(encoding="utf-8") if review_log.is_file() else None
         for figure in figures:
             no = figure.get("no", "unknown")
             issues.extend(f"{no}: {item}" for item in validate_figure_source(figure))
+            # 必填键 11 → 12：增 data_binding（作图契约 §四，机检新增必填）
             for key in ("script", "data_entrypoint", "run_command", "dependencies", "official_url",
-                        "official_api", "adaptation", "changes", "reason", "title", "conclusion"):
+                        "official_api", "adaptation", "changes", "reason", "title", "conclusion",
+                        "data_binding"):
                 if not figure.get(key):
                     issues.append(f"{no}: missing {key}")
             for key, prefix in (("file", "figures"), ("script", ""), ("data_entrypoint", "")):
-                value = figure.get(key)
+                value = normalize_manifest_path(figure.get(key))
                 try:
                     relative = (Path(prefix) / value).as_posix() if isinstance(value, str) else ""
                     _project_file(project, relative)
                     hashed_artifacts.append(relative)
                 except (ValueError, OSError):
                     issues.append(f"{no}: missing local {key}")
+            issues.extend(f"{no}: {item}" for item in validate_figure_evidence(
+                project, figure, review_log_text=review_log_text,
+                frozen_criteria_hash=state.get("criteria_sha256")))
             if figure.get("evidence_status") != "verified":
                 issues.append(f"{no}: reproduction and source evidence not verified")
         record = (project / "output/process_record.md").read_text(encoding="utf-8")
@@ -262,6 +422,8 @@ def audit_project(project):
             issues.append("Process record does not meet existing 500-line / 13-section contract")
         issues.extend(validate_review(project, review, hashed_artifacts,
                                       frozen_criteria_hash=state.get("criteria_sha256")))
+        # C16：final 阶段二次调用 stage_gate.py 作交叉确认（只读产物，不碰审批链）
+        issues.extend(stage_gate_cross_check(project, "final"))
     except Exception as exc:
         issues.append(f"Invalid artifact: {type(exc).__name__}: {exc}")
     report["passed"] = not issues
@@ -283,10 +445,17 @@ def self_test():
         for reference in (ROOT / "references").glob("*.md"):
             shutil.copy2(reference, work / "references" / reference.name)
         shutil.copy2(ROOT / "run_all.py", work / "run_all.py")
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(work), str(work / "src"))), PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTHONDONTWRITEBYTECODE="1", MPLCONFIGDIR=str(work / "mpl"))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join((str(work), str(work / "src"))),
+                   PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTHONDONTWRITEBYTECODE="1",
+                   MPLCONFIGDIR=str(work / "mpl"),
+                   # 子进程输出走管道；不锁 UTF-8 时中文 Windows 下以 cp936 写出，
+                   # 被 encoding="utf-8" 读取后变成 U+FFFD，再 print 到 gbk 终端即崩
+                   PYTHONIOENCODING="utf-8")
         commands = [[sys.executable, "-B", "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"],
                     [sys.executable, "-B", str(work / "run_all.py"), "--demo"],
-                    [sys.executable, "-B", "scripts/validate_figures.py", "--self-test"]]
+                    [sys.executable, "-B", "scripts/validate_figures.py", "--self-test"],
+                    # C16：命令集 7 → 8 条，stage_gate 进回归集（否则它自己无回归）
+                    [sys.executable, "-B", "scripts/stage_gate.py", "--self-test"]]
         commands += [[sys.executable, "-B", str(work / "examples" / script)] for script in
                      ("main.py", "评价_TOPSIS_demo.py", "预测_GM11_demo.py", "机理_ODE_demo.py")]
         results = []
@@ -306,6 +475,14 @@ def main(argv=None):
     group.add_argument("--project", type=Path)
     group.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
+    # Windows 默认控制台是 GBK(cp936)。子进程输出里有替换字符(U+FFFD)时，
+    # print 到 gbk stdout 会抛 UnicodeEncodeError 并以退出码 1 收场——
+    # 与「检查未通过」不可区分。其余入口脚本(run_all/stage_gate/...)均有此守卫，
+    # 本脚本此前漏装，在中文 Windows 默认终端下必崩。
+    if getattr(sys.stdout, "reconfigure", None):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if getattr(sys.stderr, "reconfigure", None):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     result = self_test() if args.self_test else audit_project(args.project)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["passed"] else 1

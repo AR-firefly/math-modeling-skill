@@ -1,6 +1,6 @@
 """过程记录（ProcessRecorder）：可核验的决策与实验记录 + 断点恢复。
 
-核心：**完整工作记录**——AI 透明工作，人对照着去优化。
+需求文档 4.2 核心：**完整工作记录**——AI 透明工作，人对照着去优化。
 process_record 是核心产出物，必须记录：决策依据与实验过程、为什么这么做、
 结果如何、在哪撞墙了、后来怎么改进、最终效果、算法取舍（多种算法怎么选）、
 AI 的风险点、需要人审查的点、优化方向、之后的行动建议。不是填空。
@@ -10,8 +10,8 @@ AI 的风险点、需要人审查的点、优化方向、之后的行动建议�
 - log_trace(qid, stage, thought) —— 逐问思考轨迹，stage 用标准阶段（六步试错链）：
     怎么想 / 试了什么 / 结果如何 / 在哪撞墙 / 怎么改进 / 最终效果
     （兼容旧阶段：题型判断 / 算法尝试 / 撞墙 / 改进 / 算法取舍 / 验证）
-- checkpoint(stage, next_step)   —— 断点：记录当前阶段+下一步
-- resume()                —— 断点恢复：读上次阶段，续跑不重头
+- checkpoint(stage, next_step)   —— E3 断点：记录当前阶段+下一步
+- resume()                —— E3 断点恢复：读上次阶段，续跑不重头
 - save(path)              —— 生成 process_record.md（思考轨迹节按 Q 分子标题渲染）
 
 各节填充责任（run_pipeline 与 solve_question 逐项负责，见 run_all.py）：
@@ -67,14 +67,14 @@ class ProcessRecorder:
         return self
 
     def checkpoint(self, stage, next_step):
-        """断点：当前阶段 + 下一步。"""
+        """E3 断点：当前阶段 + 下一步。"""
         self._checkpoint = (stage, next_step)
         self._entries["断点"].append(f"当前阶段：{stage} / 下一步：{next_step}  # 人工可接着 AI 思路继续")
         self.save()
         return self
 
     def resume(self):
-        """断点恢复：读已存在的 process_record.md 的"断点"节，返回上次阶段。"""
+        """E3 断点恢复：读已存在的 process_record.md 的"断点"节，返回上次阶段。"""
         path = self.output_dir / "process_record.md"
         if not path.exists():
             return ""

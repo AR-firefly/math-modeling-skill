@@ -52,7 +52,9 @@ def test_verify_reverse_skips_small_numbers(tmp_path):
     assert any("2026" in u for u in unmatched)     # 大数字无出处如实列出（人工核对是否合法）
 
 
-# ── v2.0：图号引用检查（图契约清单 ↔ 正文引用 ↔ 图文件）──
+# ── v2.1：图号引用检查（图契约清单 ↔ 正文引用 ↔ 图文件）──
+# v3.0 C5：路径语义写死 —— file 相对 figures/；script/data_entrypoint 相对项目根，
+# 分层布局 figures/scripts|data；双布局（分层 → 扁平 → 两处都不存在 = FAIL）。
 def _mk_figure_paper(cited="结果见图1和图2。"):
     return {"abstract": [cited],
             "sections": [{"title": "一", "paras": ["图1 收敛曲线"],
@@ -60,8 +62,32 @@ def _mk_figure_paper(cited="结果见图1和图2。"):
             "references": []}
 
 
+def _mk_entry(no, **overrides):
+    """v3.0 契约形状的登记项（分层布局：figures/scripts|data）。"""
+    entry = {"no": no, "title": f"t{no}", "conclusion": "c", "data_source": "r",
+             "file": f"{no}.png",
+             "script": f"figures/scripts/{no}.py",
+             "data_entrypoint": f"figures/data/{no}.json"}
+    entry.update(overrides)
+    return entry
+
+
 def _mk_manifest(figdir, entries):
     (figdir / "figures_manifest.json").write_text(json.dumps(entries), encoding="utf-8")
+
+
+def _mk_layered(figdir, *nos):
+    """建分层布局（scripts/ + data/）并返回登记项列表。"""
+    (figdir / "scripts").mkdir(exist_ok=True)
+    (figdir / "data").mkdir(exist_ok=True)
+    (figdir / "figures_manifest.json").parent.mkdir(parents=True, exist_ok=True)
+    entries = []
+    for no in nos:
+        (figdir / "scripts" / f"{no}.py").write_text("print(1)", encoding="utf-8")
+        (figdir / "data" / f"{no}.json").write_text("{}", encoding="utf-8")
+        (figdir / f"{no}.png").write_bytes(b"x")
+        entries.append(_mk_entry(no))
+    return entries
 
 
 def test_verify_figure_references_ok(tmp_path):
@@ -69,13 +95,46 @@ def test_verify_figure_references_ok(tmp_path):
     from math_modeling.verify import verify_figure_references
     figdir = tmp_path / "figures"
     figdir.mkdir()
-    (figdir / "fig1.png").write_bytes(b"x")
-    (figdir / "fig2.png").write_bytes(b"x")
-    _mk_manifest(figdir, [
-        {"no": "fig1", "title": "a", "conclusion": "b", "data_source": "r", "file": "fig1.png"},
-        {"no": "fig2", "title": "c", "conclusion": "d", "data_source": "r", "file": "fig2.png"},
-    ])
+    _mk_manifest(figdir, _mk_layered(figdir, "fig1", "fig2"))
     assert verify_figure_references(_mk_figure_paper(), figures_dir=str(figdir)) == []
+
+
+def test_verify_figure_references_flat_layout_compatible(tmp_path):
+    """C5 双布局：脚本/数据在扁平位（figures/figN.py|json）也放过——不打断既有 demo。"""
+    from math_modeling.verify import verify_figure_references
+    figdir = tmp_path / "figures"
+    figdir.mkdir()
+    (figdir / "fig1.png").write_bytes(b"x")
+    (figdir / "fig1.py").write_text("print(1)", encoding="utf-8")
+    (figdir / "fig1.json").write_text("{}", encoding="utf-8")
+    _mk_manifest(figdir, [_mk_entry("fig1", script="figures/fig1.py",
+                                    data_entrypoint="figures/fig1.json")])
+    assert verify_figure_references(_mk_figure_paper("结果见图1。"), figures_dir=str(figdir)) == []
+
+
+def test_verify_figure_references_wrong_directory_fails(tmp_path):
+    """C5 边界：「放错目录」必须抓到——分层与扁平两处都不存在 → FAIL。"""
+    from math_modeling.verify import verify_figure_references
+    figdir = tmp_path / "figures"
+    (figdir / "elsewhere").mkdir(parents=True)
+    (figdir / "fig1.png").write_bytes(b"x")
+    (figdir / "elsewhere" / "fig1.py").write_text("print(1)", encoding="utf-8")
+    (figdir / "elsewhere" / "fig1.json").write_text("{}", encoding="utf-8")
+    _mk_manifest(figdir, [_mk_entry("fig1")])
+    issues = verify_figure_references(_mk_figure_paper("结果见图1。"), figures_dir=str(figdir))
+    assert any("放错目录或缺失" in i for i in issues), issues
+
+
+def test_verify_figure_references_backslash_normalized(tmp_path):
+    """C5：manifest 反斜杠值先归一化，非 Windows 侧不再解析失败（A14）。"""
+    from math_modeling.verify import verify_figure_references
+    figdir = tmp_path / "figures"
+    figdir.mkdir()
+    entries = _mk_layered(figdir, "fig1")
+    entries[0]["script"] = "figures\\scripts\\fig1.py"
+    entries[0]["data_entrypoint"] = "figures\\data\\fig1.json"
+    _mk_manifest(figdir, entries)
+    assert verify_figure_references(_mk_figure_paper("结果见图1。"), figures_dir=str(figdir)) == []
 
 
 def test_verify_figure_references_missing_manifest(tmp_path):
@@ -91,10 +150,7 @@ def test_verify_figure_references_citation_not_registered(tmp_path):
     from math_modeling.verify import verify_figure_references
     figdir = tmp_path / "figures"
     figdir.mkdir()
-    (figdir / "fig1.png").write_bytes(b"x")
-    _mk_manifest(figdir, [
-        {"no": "fig1", "title": "a", "conclusion": "b", "data_source": "r", "file": "fig1.png"},
-    ])
+    _mk_manifest(figdir, _mk_layered(figdir, "fig1"))
     issues = verify_figure_references(_mk_figure_paper(), figures_dir=str(figdir))
     assert any("正文引用图 2" in i for i in issues)
 
@@ -104,24 +160,19 @@ def test_verify_figure_references_file_missing(tmp_path):
     from math_modeling.verify import verify_figure_references
     figdir = tmp_path / "figures"
     figdir.mkdir()
-    (figdir / "fig1.png").write_bytes(b"x")
-    _mk_manifest(figdir, [
-        {"no": "fig1", "title": "a", "conclusion": "b", "data_source": "r", "file": "fig1.png"},
-        {"no": "fig2", "title": "c", "conclusion": "d", "data_source": "r", "file": "fig2.png"},
-    ])
+    entries = _mk_layered(figdir, "fig1", "fig2")
+    (figdir / "fig2.png").unlink()
+    _mk_manifest(figdir, entries)
     issues = verify_figure_references(_mk_figure_paper(), figures_dir=str(figdir))
     assert any("fig2.png" in i and "缺失" in i for i in issues)
 
 
 def test_verify_figure_references_caption_self_proof_blocked(tmp_path):
-    """回归：图题 caption 自带'图N'不算正文引用；正文零引用时反向检查报未引用（防恒绿）。"""
+    """A3 回归：图题 caption 自带'图N'不算正文引用；正文零引用时反向检查报未引用（防恒绿）。"""
     from math_modeling.verify import verify_figure_references
     figdir = tmp_path / "figures"
     figdir.mkdir()
-    (figdir / "fig1.png").write_bytes(b"x")
-    _mk_manifest(figdir, [
-        {"no": "fig1", "title": "a", "conclusion": "b", "data_source": "r", "file": "fig1.png"},
-    ])
+    _mk_manifest(figdir, _mk_layered(figdir, "fig1"))
     paper = {"abstract": [],
              "sections": [{"title": "一", "paras": ["正文未提图"],
                            "images": [{"caption": "图1 收敛曲线"}]}],
@@ -131,15 +182,12 @@ def test_verify_figure_references_caption_self_proof_blocked(tmp_path):
 
 
 def test_verify_figure_references_embedded_in_section_passes(tmp_path):
-    """回归：图嵌入论文某节（images.path 对应契约 file）即"图进了论文"，反向检查通过；
+    """v2.4 A 回归：图嵌入论文某节（images.path 对应契约 file）即"图进了论文"，反向检查通过；
     不要求正文逐字写"图N"（自动灌引用反模式已撤销）。"""
     from math_modeling.verify import verify_figure_references
     figdir = tmp_path / "figures"
     figdir.mkdir()
-    (figdir / "fig1.png").write_bytes(b"x")
-    _mk_manifest(figdir, [
-        {"no": "fig1", "title": "a", "conclusion": "b", "data_source": "r", "file": "fig1.png"},
-    ])
+    _mk_manifest(figdir, _mk_layered(figdir, "fig1"))
     paper = {"abstract": [],
              "sections": [{"title": "一", "paras": ["正文未逐字写图号"],
                            "images": [{"path": "figures/fig1.png", "caption": "图1 关键结果"}]}],
@@ -148,7 +196,7 @@ def test_verify_figure_references_embedded_in_section_passes(tmp_path):
 
 
 def test_build_paper_content_nested_results():
-    """回归：嵌套 results {Q1:{...}} 展开路径 Q1.最优值 也能生成逐问求解节。"""
+    """v2.4 E 回归：嵌套 results {Q1:{...}} 展开路径 Q1.最优值 也能生成逐问求解节。"""
     import json
     import tempfile
     from math_modeling.paper_generator import build_paper_content
@@ -164,7 +212,7 @@ def test_build_paper_content_nested_results():
 
 
 def test_build_paper_content_images_use_qkey():
-    """回归：images 用原始问号 key 挂载；非连续问号 / 非 Q 字段不推移错位。"""
+    """A6 回归：images 用原始问号 key 挂载；非连续问号 / 非 Q 字段不推移错位。"""
     import json
     import tempfile
     from math_modeling.paper_generator import build_paper_content
@@ -179,10 +227,10 @@ def test_build_paper_content_images_use_qkey():
     eval_text = "".join(p for s in paper["sections"] if "模型评价" in s["title"]
                         for p in s["paras"])
     assert "118.7" in eval_text, "非 Q 字段值并入模型评价"
-    assert not any("总耗时秒" in s["title"] for s in paper["sections"]), "非 Q 字段不独立占节"
+    assert not any("总耗时秒" in s["title"] for s in paper["sections"]), "非 Q 字段不独立占节（A6）"
 
 
-# ── v2.0：参考文献 DOI 可解析性检查（mock 网络，不真发请求）──
+# ── v2.1：参考文献 DOI 可解析性检查（mock 网络，不真发请求）──
 def test_validate_references_doi():
     """check_doi=True：404=错号 issue，200仅可解析，网络异常必须标记待核验。"""
     from unittest.mock import patch
@@ -217,7 +265,7 @@ def test_validate_references_doi():
     assert not any("DOI" in i for i in issues)
 
 
-# ── v2.0：引用编号对应检查（正文 [N] ↔ 参考文献列表）──
+# ── v2.1.1：引用编号对应检查（正文 [N] ↔ 参考文献列表）──
 def test_verify_citations_ok():
     """正文引用 [1][2]，列表 2 条 → 无警告。"""
     from math_modeling.verify import verify_citations

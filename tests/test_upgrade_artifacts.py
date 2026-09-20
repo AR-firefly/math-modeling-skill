@@ -4,8 +4,6 @@ import pytest
 from math_modeling.paper_generator import build_paper_content, validate_references
 from math_modeling.visualizer import Visualizer
 from math_modeling.tex_renderer import render_tex
-from math_modeling.docx_renderer import render_docx
-from docx import Document
 
 
 def test_real_references_and_placeholders(tmp_path):
@@ -19,15 +17,17 @@ def test_real_references_and_placeholders(tmp_path):
 
 
 def test_render_human_blank_before_references(tmp_path):
+    """AI 声明须留空且位于参考文献之前（v3.0：TeX 单渲染，docx 侧断言随 C12 移除）。"""
     paper = {"meta": {"title": "Title"}, "references": ["Reference"], "ai_declaration": ""}
     tex = render_tex(paper)
     assert tex.index("人工智能使用声明") < tex.index("参考文献")
-    path = tmp_path / "paper.docx"
-    render_docx(paper, path)
-    paras = [p.text for p in Document(path).paragraphs]
-    i = paras.index("人工智能使用声明")
-    assert paras[i + 1] == ""
-    assert i < paras.index("参考文献")
+    # TeX 侧声明节须为空（同 gate_audit 的机检口径）。
+    # 用 str.index 切片而非 re.search：正则里写 `\section` 会被解释为「\s + ection」，
+    # 必须双写 `\\section` 才是字面量，容易写错，故此处避开正则。
+    head, tail = r"\section{人工智能使用声明}", r"\section{参考文献}"
+    between = tex[tex.index(head) + len(head):tex.index(tail)]
+    # 声明节只允许空白与 \vspace 占位，不得有任何实际文字
+    assert between.replace(r"\vspace{3cm}", "").strip() == "", repr(between)
 
 
 def test_old_figure_is_not_evidence_complete(tmp_path):
@@ -42,9 +42,13 @@ def test_figure_evidence_fields(tmp_path):
         script="plot.py", data_entrypoint="data.csv", run_command="python plot.py",
         dependencies={"matplotlib": "3.10"}, official_url="https://matplotlib.org/stable/api/_as_gen/matplotlib.pyplot.plot.html",
         official_api="matplotlib.pyplot.plot", adaptation="official_api_composition",
-        changes="Use measured values", reason="Show trend", seed=None)
+        changes="Use measured values", reason="Show trend", seed=None,
+        data_binding={"results_path": "results/q1_results.json", "bindings": {"y": "Q1"}})
     record=v._figures[0]
     assert record["script"] == "plot.py"
+    # 字段齐全（含 v3.0 新增必填 data_binding）→ pending_verification；
+    # reproduced 由 mark_reproduced 在脚本跑通后自写，verified 只由审查 Agent 写。
+    assert record["missing_evidence"] == []
     assert record["evidence_status"] == "pending_verification"
 
 
@@ -61,10 +65,13 @@ def test_excluded_reference():
 
 
 def test_legacy_declaration_empty():
-    from math_modeling.paper_generator import PaperGenerator, PaperConfig
-    gen = PaperGenerator(PaperConfig())
-    gen.write_ai_report()
-    assert [p.text for p in gen.doc.paragraphs] == ["人工智能使用声明", ""]
+    """v3.0（C12）：docx 链路已删，AI 声明改由 TeX 侧承担——空声明节位于参考文献之前。"""
+    paper = {"meta": {"title": "T"}, "references": ["A. 2024. https://example.org"],
+             "ai_declaration": ""}
+    tex = render_tex(paper)
+    head, tail = r"\section{人工智能使用声明}", r"\section{参考文献}"
+    between = tex[tex.index(head) + len(head):tex.index(tail)]
+    assert between.replace(r"\vspace{3cm}", "").strip() == "", repr(between)
 
 
 def test_source_evidence_cannot_be_missing():

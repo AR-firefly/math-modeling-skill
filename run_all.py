@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v2.0 全流程编排（seed=42 固定）：清洗 → 逐问求解 → 五样检验 → 灵敏度 → 论文 → 查重风险点 → 双渲染 → 图契约 → process_record
+v3.0 全流程编排（seed=42 固定）：清洗 → 逐问求解 → 五样检验 → 灵敏度 → 论文 → 查重风险点 → TeX 单渲染 → 图契约 → process_record
 
 用法：
     python run_all.py --demo                      # demo 合成数据跑通全流程（验证）
     python run_all.py <问题.txt> <数据.csv> <meta.json>   # 真实赛题（meta: {"title","school"}）
 
-产物写当前工作目录（SKILL_ROOT 只读；真实赛题请把本文件拷到赛题工作目录运行）。
+产物写当前工作目录（SKILL_ROOT 只读；真实赛题用本文件的绝对路径调用，不复制孤立入口）。
+共享语料（优秀论文库）需自备，缺失不阻断运行：参考文献比对自动降级。
 """
 import os
 import sys
@@ -23,17 +24,20 @@ try:
     from math_modeling import (
         ProcessRecorder, DataCleaner, Visualizer, sensitivity_scan, strategy_reason,
         build_paper_content, verify_paper_numbers, write_run_manifest, build_provenance,
-        plagiarism_risk_review, render_risk_points, render_tex, render_docx, validate_references,
+        plagiarism_risk_review, render_risk_points, render_tex, validate_references,
         verify_figure_references, verify_citations,
     )
+    # C7：共享语料唯一定位点（禁硬编码路径）
+    from math_modeling.shared_corpus import SHARED_PAPERS_DIR
 except ImportError:
     sys.path.insert(0, os.path.join(ROOT, "src"))
     from math_modeling import (
         ProcessRecorder, DataCleaner, Visualizer, sensitivity_scan, strategy_reason,
         build_paper_content, verify_paper_numbers, write_run_manifest, build_provenance,
-        plagiarism_risk_review, render_risk_points, render_tex, render_docx, validate_references,
+        plagiarism_risk_review, render_risk_points, render_tex, validate_references,
         verify_figure_references, verify_citations,
     )
+    from math_modeling.shared_corpus import SHARED_PAPERS_DIR
 
 SEED = 42
 np.random.seed(SEED)
@@ -131,8 +135,59 @@ def run_verifications(results, qi, data, seed) -> dict:
     return evidence
 
 
-def plot_and_register_figures(results_all, out_dir="figures"):
-    """Explicit demo-only charts; real solvers select charts from their data semantics.
+# 本文件的 demo 图脚本模板特征串；真实路径用它识别"图由 run_all 生成"（C6 守卫）
+_DEMO_FIGURE_MARKER = "API composition: one demo metric per axis"
+
+
+def audit_figure_registry(figures_dir="figures"):
+    """真实路径的契约登记校验（C6）：真实运行不画图，只核验作图 Agent 的登记是否合规。
+
+    返回 issues 列表（不阻断，列人工审核方向）：缺 manifest / 缺 data_binding /
+    脚本与数据入口按双布局解析不到。
+    """
+    from pathlib import Path
+    fig_dir = Path(figures_dir)
+    manifest_path = fig_dir / "figures_manifest.json"
+    if not manifest_path.is_file():
+        return [f"图契约清单缺失：{manifest_path}（真实路径不代作图，须由作图 Agent 产出）"]
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"图契约清单解析失败：{exc}"]
+    if not isinstance(manifest, list):
+        return ["图契约清单必须是列表（Visualizer.save_manifest 的产物）"]
+    from math_modeling.verify import resolve_figure_entry
+    issues = []
+    for figure in manifest:
+        no = figure.get("no", "unknown")
+        if not figure.get("data_binding"):
+            issues.append(f"{no}: 缺 data_binding（作图契约 §四机检必填）")
+        for key, default, subdir in (("script", f"{no}.py", "scripts"),
+                                     ("data_entrypoint", f"{no}.json", "data")):
+            if resolve_figure_entry(fig_dir, figure.get(key), default, subdir) is None:
+                issues.append(f"{no}: {key} 放错目录或缺失：{figure.get(key)}")
+    return issues
+
+
+def detect_run_all_generated_figures(figures_dir="figures"):
+    """C6 守卫：真实路径下检测图是否由 run_all 的 demo 模板生成（含模板特征串的 .py）。"""
+    from pathlib import Path
+    fig_dir = Path(figures_dir)
+    if not fig_dir.is_dir():
+        return []
+    found = []
+    for script in sorted(fig_dir.rglob("*.py")):
+        try:
+            text = script.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _DEMO_FIGURE_MARKER in text:
+            found.append(str(script.relative_to(fig_dir.parent).as_posix()))
+    return found
+
+
+def _demo_plot_and_register_figures(results_all, out_dir="figures"):
+    """Explicit demo-only charts (C6): 只在 `--demo` 调用，真实路径禁止走到这里。
 
 Each demo metric is isolated to avoid mixing unknown units, and ships its exact
 script/data. Source is the official Axes.bar API, not a claimed gallery copy.
@@ -153,6 +208,16 @@ script/data. Source is the official Axes.bar API, not a claimed gallery copy.
         data = out / (no + ".json")
         script = out / (no + ".py")
         data.write_text(json.dumps({"metric":metric,"value":value,"question":qkey}, ensure_ascii=False),encoding="utf-8")
+        # CONTRACT（作图契约 §四）：demo 的值同样来自 results/results.json，可逐值比对；
+        # demo 用扁平布局（figures/figN.py|json|png），正是双布局兼容要保住的既有形态。
+        contract = json.dumps({"fig_id": no,
+                               "data_binding": {"results_path": "results/results.json",
+                                                "kind": "data",
+                                                "data_path": str(data).replace("\\", "/"),
+                                                "bindings": {"y": f"{qkey}_{metric}"}},
+                               "plot_calls": [{"method": "bar", "data_params": ["x", "y"],
+                                               "aux_params": ["x_labels"]}]},
+                              ensure_ascii=False, indent=4)
         script.write_text("""# Official API: https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.bar.html
 # API composition: one demo metric per axis; input and output next to this script.
 import json
@@ -160,7 +225,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-root = Path(__file__).resolve().parent
+CONTRACT = """ + contract + """
 record = json.loads(Path(__file__).with_suffix('.json').read_text(encoding='utf-8'))
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 fig, ax = plt.subplots(figsize=(6, 4))
@@ -178,7 +243,10 @@ plt.close(fig)
                             dependencies={"matplotlib":matplotlib.__version__},
                             official_url="https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.bar.html",
                             official_api="Axes.bar", adaptation="official_api_composition",
-                            changes="每指标独立轴，读本地图数据，输出300dpi PNG", reason="演示复现契约；无同量纲证据不混绘", seed=SEED)
+                            changes="每指标独立轴，读本地图数据，输出300dpi PNG", reason="演示复现契约；无同量纲证据不混绘", seed=SEED,
+                            data_binding={"results_path": "results/results.json", "kind": "data",
+                                          "bindings": {"y": f"{qkey}_{metric}"}})
+        viz.mark_reproduced(no)  # 脚本已跑通且 PNG 已落盘 → 状态机自写 reproduced（C3）
         fig_images.setdefault(qkey,[]).append({"path":str(out / (no + ".png")),"caption":f"图{no[3:]} {qkey} {metric}（演示）"})
     return viz.save_manifest(), fig_images
 
@@ -197,7 +265,10 @@ def paper_to_text(paper: dict) -> str:
 
 
 def load_ref_papers(ref_dir, problem_code="", selected=None):
-    """从 references/优秀论文/{题号}/{类}/ 载入参考论文文本（.txt 优先）。"""
+    """从共享语料目录的 {题号}/{类}/ 载入参考论文文本（.txt 优先）。
+
+    ref_dir 由调用方传入（真实赛题路径用 `shared_corpus.SHARED_PAPERS_DIR`），不在此硬编码。
+    """
     from pathlib import Path
     root = Path(ref_dir).resolve()
     if not selected:
@@ -238,15 +309,15 @@ def validate_output_directory(project, *, demo_mode=False):
 
 
 def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
-    """清洗 → 逐问求解 → 五样检验 → 灵敏度 → 论文 → 风险点 → 双渲染 → process_record。
+    """清洗 → 逐问求解 → 五样检验 → 灵敏度 → 论文 → 风险点 → TeX 单渲染 → process_record。
 
     strict_refs=True（真实赛题）：参考文献必须真实（占位被 validate_references 拦截）；
     strict_refs=False（demo 演示）：占位仅警告不阻断。
     """
     validate_output_directory(os.getcwd(), demo_mode=True)
     rec = ProcessRecorder()
-    stage = rec.resume()  # 断点恢复
-    # 文献借鉴节（v2.0）：记录解题阶段参考的每篇文献；真实赛题由门禁0 文献调研报告逐篇卡片填充。
+    stage = rec.resume()  # E3 断点恢复
+    # 文献借鉴节（v2.1）：记录解题阶段参考的每篇文献；真实赛题由门禁0 文献调研报告逐篇卡片填充。
     # demo 未查文献 → 诚实占位说明，不编造文献（门禁0 产物在真实赛题工作目录产出）。
     rec.log("文献借鉴", "本节记录解题阶段参考的每篇文献：来源 / 参考了它的什么（模型/算法/论证/写法）/ 怎么用到本赛题 / 用了之后效果（见 process_record规格.md §5.5）。demo 流程演示未查文献，此行为占位；真实赛题由门禁0 文献调研报告的逐篇文献卡片填充。")
     df = pd.read_csv(data_path)
@@ -291,7 +362,7 @@ def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
         json.dump(code_map, f, ensure_ascii=False, indent=2)
     import importlib.metadata as _imeta
     _deps = {}
-    for _pkg in ("numpy", "pandas", "scipy", "matplotlib", "python-docx", "scikit-learn", "statsmodels"):
+    for _pkg in ("numpy", "pandas", "scipy", "matplotlib", "scikit-learn", "statsmodels"):
         try:
             _deps[_pkg] = _imeta.version(_pkg)
         except Exception:
@@ -301,8 +372,9 @@ def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
 
     # Per-question numerical diagnostics above include an actual parameter scan.
 
-    # v2.0 图契约链路：画关键结果图 + 登记契约落盘；图嵌入论文正文
-    figure_manifest, fig_images = plot_and_register_figures(results_all)
+    # v2.1 图契约链路：画关键结果图 + 登记契约落盘（M1 修复）；图嵌入论文正文（F1-01）
+    # C6：demo 兜底专用（`--demo` 才走到这里）；真实路径不画图，只做契约登记校验。
+    figure_manifest, fig_images = _demo_plot_and_register_figures(results_all)
     rec.log("复现", "每图代码、数据及官方API记录：" + open(figure_manifest, encoding="utf-8").read())
 
     # 论文（结构化 + 数值校验阻断 + 论文参考 + 风险点）
@@ -318,7 +390,7 @@ def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
     if unmatched:
         rec.log("人工审核方向",
                 f"论文 {len(unmatched)} 个数字无 results 出处，需人工审核（防编造）：{', '.join(map(str, unmatched[:10]))}")
-    ref_papers = load_ref_papers("references/优秀论文")
+    ref_papers = load_ref_papers(SHARED_PAPERS_DIR)
     risk_points = plagiarism_risk_review(paper_to_text(paper), ref_papers)
     render_risk_points(risk_points, "output/risk_points.md")
     rec.log("论文参考与风险点",
@@ -326,17 +398,16 @@ def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
             f"{max((r['level'] for r in risk_points), default='无')}）")
 
     render_tex(paper, "output/paper.tex")
-    render_docx(paper, "output/paper.docx")
 
-    # v2.0 图号引用检查（图契约清单 ↔ 正文引用 ↔ 图文件存在），issues 列入人工审核
+    # v2.1 图号引用检查（图契约清单 ↔ 正文引用 ↔ 图文件存在，双向 F1-01），issues 列入人工审核
     fig_issues = verify_figure_references(paper, figures_dir="figures")
     if fig_issues:
         rec.log("人工审核方向",
                 f"图号引用 {len(fig_issues)} 处待查（图契约/编号/图文件）：{'；'.join(fig_issues[:6])}")
     else:
-        # 只记中性事实，不写"通过/一致"乐观断言（防向 process_record 注入未经复核的结论）
+        # 只记中性事实，不写"通过/一致"乐观断言（防向 process_record 注入未经复核的结论，A7）
         rec.log("论文参考与风险点", "图号引用检查：0 issues")
-    # v2.0 引用编号对应检查（正文 [N] ↔ 参考文献列表，WARN 级不阻断）
+    # v2.1.1 引用编号对应检查（正文 [N] ↔ 参考文献列表，WARN 级不阻断）
     cit_warns = verify_citations(paper_to_text(paper), paper.get("references", []))
     if cit_warns:
         rec.log("人工审核方向",
@@ -347,7 +418,7 @@ def _run_demo_pipeline(problem, data_path, meta, seed=42, strict_refs=False):
     rec.checkpoint("论文", "完成")
     rec.save()
 
-    print("\n[run_all] 全流程完成。产物：output/paper.tex + paper.docx + process_record.md + risk_points.md")
+    print("\n[run_all] 全流程完成。产物：output/paper.tex + process_record.md + risk_points.md")
     return manifest
 
 
@@ -429,8 +500,18 @@ cleaning callback (dataframe, recorder)->dataframe. See execution contract.
     Path("results/results.json").write_text(json.dumps(results_all, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     Path("results/_code_map.json").write_text(json.dumps(code_map, ensure_ascii=False, indent=2), encoding="utf-8")
     import importlib.metadata
-    dependencies = {name: importlib.metadata.version(name) for name in ("numpy", "pandas", "scipy", "matplotlib", "python-docx")}
+    dependencies = {name: importlib.metadata.version(name) for name in ("numpy", "pandas", "scipy", "matplotlib")}
     write_run_manifest("results", seed, f"run_pipeline(stage={stage})", [data_path, "results/df_clean.json"], deps=dependencies)
+    # C6：真实路径不画图，只做契约登记校验；并检测 figures/ 是否混入 run_all 的 demo 图。
+    registry_issues = audit_figure_registry("figures")
+    if registry_issues:
+        rec.log("人工审核方向", "图契约登记 " + str(len(registry_issues)) + " 处待查：" + "；".join(registry_issues[:6]))
+    generated = detect_run_all_generated_figures("figures")
+    if generated:
+        warning = ("图由 run_all 演示模板生成，不得作为真实赛题产出；"
+                   "真实图形须由作图 Agent 独立脚本产出：" + "、".join(generated))
+        rec.log("不确定点", warning)
+        print("[run_all][warn] " + warning)
     Path("output/人工待办.md").write_text("# 人工待办\n\n- 团队审阅第一问并明确是否批准。\n- 人工填写参考文献前的AI使用声明及AI工具使用详情.pdf。\n- 人工确认最终参赛提交；AI交付状态不代表已经完成上述事项。\n", encoding="utf-8")
     if stage == "stage2":
         paper = meta.get("paper")
@@ -459,8 +540,7 @@ cleaning callback (dataframe, recorder)->dataframe. See execution contract.
             for filename, value in (("claims", meta["claims"]), ("source_evidence", meta.get("source_evidence", [])), ("non_result_numbers", meta.get("non_result_numbers", []))):
                 Path(f"output/{filename}.json").write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
             render_tex(paper, "output/paper.tex")
-            render_docx(paper, "output/paper.docx")
-            references = load_ref_papers(skill_root / "references/优秀论文", selected=meta.get("selected_papers"))
+            references = load_ref_papers(SHARED_PAPERS_DIR, selected=meta.get("selected_papers"))
             if references:
                 risk_points = plagiarism_risk_review(paper_to_text(paper), references)
                 render_risk_points(risk_points, "output/risk_points.md")
@@ -503,6 +583,9 @@ if __name__ == "__main__":
     elif not all((args.problem, args.data, args.meta, args.solver_module)):
         parser.error("真实运行需要问题、数据、meta及--solver-module；演示请显式--demo")
     else:
+        # 共享语料（优秀论文库）需自备，缺失不阻断运行：参考文献比对自动降级，
+        # 并在 output/risk_points.md 写明「未进行参考论文文本比对，此状态不代表零风险」。
+        # 语料供论文阶段「深度参考优秀论文」使用，与门禁0 文献先行（联网检索）无关。
         spec = importlib.util.spec_from_file_location("contest_solver", args.solver_module)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)

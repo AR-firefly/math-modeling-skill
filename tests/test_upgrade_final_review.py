@@ -35,7 +35,32 @@ def test_artifact_reverse_numbers_and_tex_layout(tmp_path):
     assert audit.verify_artifact_numbers(tmp_path,paper,"Cost 25 units [1].",tex) == []
     changed=dict(paper,abstract=["Cost 25 units [1]. Extra gain 900 units."])
     issues=audit.verify_artifact_numbers(tmp_path,changed,"Cost 25 units [1]. Extra gain 900 units.",render_tex(changed))
-    assert all(any(label in issue and "900" in issue for issue in issues) for label in ("JSON","DOCX","TeX"))
+    assert all(any(label in issue and "900" in issue for issue in issues) for label in ("JSON","TeX"))
+
+
+def test_stage_gate_cross_check_reports_missing_script():
+    """C16：final 阶段二次调 stage_gate.py；脚本缺失时如实报"未执行"，不假装已核对。"""
+    import importlib.util
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("sg_audit", root / "scripts/gate_audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    from unittest.mock import patch
+    with patch.object(type(audit.ROOT), "is_file", return_value=False):
+        issues = audit.stage_gate_cross_check(audit.ROOT, "final")
+    assert issues and ("缺失" in issues[0] or "未执行" in issues[0]), issues
+
+
+def test_audit_declares_machine_check_limits():
+    """诚实性回归：模块 docstring 必须写明哈希能防什么、不能防什么。"""
+    import importlib.util
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("limits_audit", root / "scripts/gate_audit.py")
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    doc = audit.__doc__
+    assert "不能防" in doc and "数据编造" in doc, "须写明哈希不能防数据编造"
+    assert "外部锚" in doc, "须写明真独立性来自证据哈希外部锚"
 
 
 def test_tex_readable_preserves_math_but_removes_geometry():

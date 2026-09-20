@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "math-modeling"
-version = "2.0.0"
-description = "数学建模国赛全流程 Skill v2.0：文献先行→求解→校验→论文生成→过程记录（含图契约/文献借鉴）"
+version = "3.0.0"
+description = "数学建模国赛全流程 Skill v3.0：文献先行→求解→校验→LaTeX 论文生成→过程记录（含图契约/作图契约/信息检索）"
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 requires-python = ">=3.9"
@@ -14,7 +14,6 @@ dependencies = [
     "pandas>=1.5",
     "scipy>=1.9",
     "matplotlib>=3.7",
-    "python-docx>=0.8.11",
     "scikit-learn>=1.2",
     "statsmodels>=0.14",
     "pymupdf>=1.24",   # PDF 文本提取 / 扫描页转图
@@ -22,3 +21,9 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# v3.0：本仓库 src/ 必须优先于 site-packages 里可能残留的旧版 math-modeling。
+# 否则 `pytest tests/` 会静默测到旧版包（失败模式是"全绿但测错对象"）。
+pythonpath = ["src"]

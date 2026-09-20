@@ -1,9 +1,9 @@
-"""validate_figures.py 静态预检测试（补 pytest 覆盖）。
+"""validate_figures.py 静态预检测试（E5-02 补 pytest 覆盖）。
 
 回归点：
 - good 样例全 PASS / bad 样例（rainbow + dpi<300）FAIL
-- clabel 等值线标注 fontsize=8 是图内标注，不应触发 FONT-SIZE FAIL
-- 中文字体集中配置在 import 的本地模块（examples/utils.py 模式）不误报 CN-FONT
+- E2-01：clabel 等值线标注 fontsize=8 是图内标注，不应触发 FONT-SIZE FAIL
+- E3-02：中文字体集中配置在 import 的本地模块（examples/utils.py 模式）不误报 CN-FONT
 """
 import sys
 from pathlib import Path
@@ -48,7 +48,7 @@ fig.savefig("figures/fig1.png", dpi=72)
 
 
 def test_clabel_fontsize_not_fail():
-    """回归：clabel 等值线标注 fontsize=8 是图内标注，不应触发 FONT-SIZE FAIL。"""
+    """E2-01 回归：clabel 等值线标注 fontsize=8 是图内标注，不应触发 FONT-SIZE FAIL。"""
     src = '''
 import matplotlib as mpl
 mpl.rcParams.update({"font.sans-serif": ["SimHei"], "font.size": 11})
@@ -64,7 +64,7 @@ fig.savefig("figures/fig1.png", dpi=300)
 
 
 def test_cn_font_in_imported_module(tmp_path):
-    """回归：字体集中配置在 import 的本地模块 → 单文件不误报 CN-FONT。"""
+    """E3-02 回归：字体集中配置在 import 的本地模块 → 单文件不误报 CN-FONT。"""
     src_path = tmp_path / "plot_demo.py"
     src_path.write_text('import utils\nfig.savefig("figures/fig1.png", dpi=300)\n',
                         encoding="utf-8")

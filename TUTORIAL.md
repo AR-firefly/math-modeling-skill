@@ -2,8 +2,7 @@
 
 > 现行阶段、来源、创新、人工声明及交付边界见 `references/执行与交付契约.md`；原细则在当前阶段范围内执行，不代替团队第一问批准或全文独立终审。
 
-
-> math-modeling-skill v2.0 从安装到接入真实赛题的完整走法。
+> math-modeling-skill v3.0 从安装到接入真实赛题的完整走法。
 
 ## 1. 安装
 
@@ -14,7 +13,7 @@ python -c "import math_modeling; print('ok')"   # 验证
 pip install -r "<SKILL_ROOT绝对路径>/requirements-dev.txt" # 仅跑测试需要（pytest）
 ```
 
-依赖：numpy、pandas、scipy、matplotlib、python-docx、scikit-learn、statsmodels（运行）；pytest 在 requirements-dev.txt（测试）。
+依赖：numpy、pandas、scipy、matplotlib、scikit-learn、statsmodels、pymupdf（运行）；pytest 在 requirements-dev.txt（测试）。
 
 ## 2. 跑内置 demo（全流程）
 
@@ -25,12 +24,12 @@ python "<SKILL_ROOT绝对路径>/run_all.py" --demo    # 内置 demo 合成数�
 
 自动完成：读题（内置 2 个子问题）→ 生成 demo 数据 → 数据清洗六策略择优 →
 逐问求解（通用占位实现）→ 五样检验诊断 → 灵敏度扫描 →
-论文生成 → verify 双向校验 → 双渲染。
+论文生成 → verify 双向校验 → TeX 单渲染。
 
 > demo 产物写到当前工作目录（`output/`、`results/`、`figures/`，git 忽略）：
 >
 > - `results/results.json` + `results/run_manifest.json` —— 结果与复现清单
-> - `output/paper.tex` + `output/paper.docx` —— 双渲染论文
+> - `output/paper.tex` —— 论文源码（v3.0 唯一交付格式，可在线 LaTeX 编译）
 > - `output/process_record.md` —— **核心产出物**：完整可核验决策摘要与实验记录（13 节 + 逐问思考轨迹 + 文献借鉴）
 > - `output/risk_points.md` —— 查重风险点清单（人工按清单改写规避）
 
@@ -38,7 +37,7 @@ python "<SKILL_ROOT绝对路径>/run_all.py" --demo    # 内置 demo 合成数�
 > 通用五样检验是**真实重算诊断**（不达标标 WARN 进 process_record，不假装通过）；
 > 真实赛题由编程手按题型替换为 algorithms/ 对应算法，并换成硬断言五样检验。
 
-## 3. 跑四类示例（含五样检验）
+## 3. 跑四类示例（Task 9，含五样检验）
 
 ```bash
 cd examples
@@ -79,7 +78,7 @@ python "<SKILL_ROOT绝对路径>/run_all.py" 问题.txt 数据.csv meta.json --s
 > **run_all 内置 demo 是流程演示**：通用求解是占位（物理上无法对任意赛题自动建模），
 > 产物与论文仅演示全流程跑通，**不代表开箱出可用论文**——真实赛题走上面三步。
 
-## 5. 断点恢复
+## 5. 断点恢复（E3）
 
 中断后从独立赛题cwd使用入口绝对路径恢复，保留旧过程原文并核对实际阶段/批准/输入版本；Markdown断点文字不代替批准。
 只复用仍有效的阶段证据与冻结输入，缺状态标未知；基础变化后重新审阅，不能从旧日志猜测已通过。
@@ -131,10 +130,10 @@ python -m pytest tests/ -v
 
 `project_solver.py` 导出：
 
-| 接口 | 必须返回/完成 |
-| --- | --- |
-| prepare_data(df, rec) | 按实际题目清洗后的pandas.DataFrame，真实决策写rec |
-| solve_question(question, df, seed, qi, rec) | dict，公开结果键以对应Qn_或Qn.开头，数值/数组为实际结果 |
+| 接口                                        | 必须返回/完成                                            |
+| ------------------------------------------- | -------------------------------------------------------- |
+| prepare_data(df, rec)                       | 按实际题目清洗后的pandas.DataFrame，真实决策写rec        |
+| solve_question(question, df, seed, qi, rec) | dict，公开结果键以对应Qn\_或Qn.开头，数值/数组为实际结果 |
 
 第一问返回dict另含 `_basis`（非空的实质模型/假设/算法依据）、`_basis_files`（第一问实际代码/数据依赖路径列表）、`_review`（下列12字段）和可选 `_code_map`（结果字段到代码位置）。别把会独立变化的Q2文件捆绑进第一问依据。
 
@@ -145,7 +144,7 @@ python -m pytest tests/ -v
 ```json
 {
   "title": "赛题名称",
-  "read_csv_options": {"dtype": {"编号": "string"}}
+  "read_csv_options": { "dtype": { "编号": "string" } }
 }
 ```
 
@@ -184,14 +183,14 @@ record_team_approval(
 
 ### 第二阶段meta及完整论文
 
-meta保留title，增加 `q1_basis`（与第一问返回_basis完全一致）。论文手将实际完整PAPER_STRUCT写入meta.paper：meta.title、abstract字符串列表、sections列表（每节title、paras、formulas、tables、images）、references字符串列表、ai_declaration空字符串。表含caption/headers/rows/notes，图含path/caption/notes；必要符号、单位和条件写入内容，不以占位说明冒充正文。
+meta保留title，增加 `q1_basis`（与第一问返回\_basis完全一致）。论文手将实际完整PAPER_STRUCT写入meta.paper：meta.title、abstract字符串列表、sections列表（每节title、paras、formulas、tables、images）、references字符串列表、ai_declaration空字符串。表含caption/headers/rows/notes，图含path/caption/notes；必要符号、单位和条件写入内容，不以占位说明冒充正文。
 
 meta同时提供：
 
 - `claims`：实际结果声明列表，含path、text、label、value、unit、expected_unit；派生量按实际计算给scale/offset和derivation。标签、单位及数字必须对应实际论文。
 - `non_result_numbers`：每项text、kind（year/index/constant/citation/unit/input）、reason，解释非结果数字，不用它掩盖未映射的实验结果。
 - `source_evidence`：与参考文献同序，每项status、publisher、original_url、purpose、original_source、verification_note；真实核验后才能填verified与true。
-- `selected_papers`：相对SKILL_ROOT/references/优秀论文的已选UTF-8文本文件路径列表，不允许越界或扫描占位文本；实际阅读全文及页码证据另记，文本相似检查不等于全文质量审查。
+- `selected_papers`：相对**共享语料目录**（`SHARED_PAPERS_DIR`，可用环境变量 `MM_SHARED_PAPERS` 覆盖；语料保留在 v2.0 目录、不在本仓库）的已选UTF-8文本文件路径列表，不允许越界或扫描占位文本；实际阅读全文及页码证据另记，文本相似检查不等于全文质量审查。
 
 没有meta.paper只保存计算待审状态，不能声称全文完成。pipeline最多生成final_awaiting_review；完成全部质量改进、渲染、复现和固定双审后再交付。AI声明/详情正文保持空白，人工事项不由AI伪造完成。
 
@@ -199,18 +198,18 @@ meta同时提供：
 
 只有完成真实全文、渲染、复现和主Agent/独立Agent审查后才形成最终结论。先以待审状态建立 `output/final_review.json`，各项字段如下；不要复制“passed”模板冒充已经审过。
 
-| 字段 | 内容 |
-| --- | --- |
-| schema_version | 整数1 |
-| criteria_file | 固定为references/终审运行检查表.md（项目相对路径） |
-| criteria_sha256 | 项目内该标准文件的实际SHA-256，必须与第一问首次冻结的workflow状态一致 |
-| self_review | reviewer、decision、open_issues、evidence四字段；主Agent实际自审记录 |
-| independent_review | 同上，由另一位独立审查者提供，reviewer必须与主Agent不同 |
-| artifact_hashes | 项目相对文件路径到实际SHA-256的映射 |
+| 字段               | 内容                                                                  |
+| ------------------ | --------------------------------------------------------------------- |
+| schema_version     | 整数1                                                                 |
+| criteria_file      | 固定为references/终审运行检查表.md（项目相对路径）                    |
+| criteria_sha256    | 项目内该标准文件的实际SHA-256，必须与第一问首次冻结的workflow状态一致 |
+| self_review        | reviewer、decision、open_issues、evidence四字段；主Agent实际自审记录  |
+| independent_review | 同上，由另一位独立审查者提供，reviewer必须与主Agent不同               |
+| artifact_hashes    | 项目相对文件路径到实际SHA-256的映射                                   |
 
 两份review中的decision未审或未通过时保持pending/failed，并记录真实open_issues；只有实际审查全部通过才记passed及空问题列表。evidence为非空项目相对路径列表，指向实际审查证据文件；不能只写“已通过”而无逐项事实。
 
-artifact_hashes必须包括：output/paper.json、paper.tex、paper.docx、claims.json、source_evidence.json、process_record.md、workflow_state.json，results/results.json，figures/figures_manifest.json；若存在output/non_result_numbers.json也纳入。逐图图片、绘图脚本、数据入口，以及self_review和independent_review两方列出的所有证据文件，同样必须纳入真实哈希。所有路径须在项目内且文件存在。final_review.json自身不作自哈希；criteria由criteria_sha256及首次冻结基线双重核对。哈希只证明文件版本一致，不能证明内容正确。
+artifact_hashes必须包括：output/paper.json、paper.tex、claims.json、source_evidence.json、process_record.md、workflow_state.json，results/results.json，figures/figures_manifest.json；若存在output/non_result_numbers.json也纳入。逐图图片、绘图脚本、数据入口，以及self_review和independent_review两方列出的所有证据文件，同样必须纳入真实哈希。所有路径须在项目内且文件存在。final_review.json自身不作自哈希；criteria由criteria_sha256及首次冻结基线双重核对。哈希只证明文件版本一致，不能证明内容正确。
 
 在完整产物准备好后，从独立赛题cwd执行：
 
@@ -219,3 +218,15 @@ python "<SKILL_ROOT绝对路径>/scripts/gate_audit.py" --project "<赛题项目
 ```
 
 这是全文可机检审计，不能作为第一问阶段前置条件。它要求真实第二阶段和有效第一问批准，核对实际交付物、两方审查证据及冻结标准。任何被审文件改变，都必须按实际影响重新审查并更新真实哈希；不能仅重算哈希消除问题。审计返回machine_checks_only，即使机器通过仍不代表评委必给国奖或团队人工事项完成。
+
+## 11. 七份编排任务书怎么用
+
+`references/任务书/` 里是七份文档：一份 **需求文档（主agent）.md** + 六份角色任务书（建模手 / 编程手 / 作图手 / 论文手 / 信息检索手 / 审查手）。
+
+它们把 SKILL.md 的六角色表落成可执行剧本——每个角色具体加载哪些文档、产出什么、按什么格式写日志、在哪个门禁交审。跑真实赛题时，主 Agent 按需求文档派活，各角色按各自的任务书干活。
+
+**这七份文档是按一套具体工作环境写的，你可以改：**
+
+- 需求文档 §0 有任务参数表（赛题文件、Skill 路径、工作目录）——**开跑前先填**
+- 文中 `SKILL_ROOT` 指你的 skill 仓库根目录，按实际路径替换；`<SKILL_ROOT>` 是待填占位符
+- 角色划分、加载清单、日志格式都可以按自己的习惯调整；建议先完整跑一遍，知道每条在防什么问题再动

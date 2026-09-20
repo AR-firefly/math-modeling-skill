@@ -223,7 +223,7 @@ def build_provenance(results_path, paper_text, code_map, tol=1e-2):
 def _body_text(paper):
     """正文文本（不含图 caption）——图契约检查的"正文引用"基准。
 
-    图题 caption 自带"图N"（图契约登记的内容），若纳入则图题自证被引用、检查恒绿；
+    图题 caption 自带"图N"（图契约登记的内容），若纳入则图题自证被引用、检查恒绿（A3）；
     正文引用必须来自章节正文（标题/paras/公式/表格），不含 images。
     """
     lines = list(paper.get("abstract", []))
@@ -237,13 +237,52 @@ def _body_text(paper):
     return "\n".join(str(x) for x in lines)
 
 
+def normalize_figure_path(value):
+    """manifest 内路径一律正斜杠（作图契约 §二）；反斜杠值在此归一化。
+
+    兼容既有 Windows 反斜杠登记值（A14），非 Windows 侧不再解析失败。
+    """
+    return value.replace("\\", "/").strip() if isinstance(value, str) else value
+
+
+def resolve_figure_entry(fig_dir, value, default_name, subdir=None, root_relative=True):
+    """双布局解析（C5）：**先分层 → 再扁平 → 两处都不存在 = None**。
+
+    fig_dir: 项目的 figures/ 目录。subdir: 分层子目录名（script→scripts、data_entrypoint→data）。
+    `root_relative=True`（`script`/`data_entrypoint` 语义：相对项目根）时候选依次为：
+    相对项目根的登记值 → 相对 figures/ 的登记值 → figures/<subdir>/<name> → figures/<name>。
+    `root_relative=False`（`file` 语义：相对 figures/）时**只看 figures/ 下**——否则项目根
+    偶然同名的文件会把"放错目录"判成通过（假绿）。
+    返回 None 即"放错目录"（脚本/数据不在 figures/ 契约位置），调用方必须报 issue，不得当作通过。
+    """
+    norm = normalize_figure_path(value) or default_name
+    basename = str(norm).rsplit("/", 1)[-1]
+    candidates = [fig_dir.parent / norm, fig_dir / norm] if root_relative else []
+    if subdir:
+        candidates.append(fig_dir / subdir / basename)
+    candidates.append(fig_dir / basename)
+    for candidate in dict.fromkeys(candidates):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def verify_figure_references(paper, figures_dir="figures", manifest_name="figures_manifest.json"):
-    """图号引用交叉检查（图契约清单 ↔ 正文引用 ↔ 图文件存在）。空列表 = 通过。
+    """图号引用交叉检查（图契约清单 ↔ 正文引用 ↔ 图文件 ↔ 脚本/数据入口）。空列表 = 通过。
 
     对应国赛"图题在图下、编号与正文一一对应"（格式 15%）：
     1. figures/figures_manifest.json 存在且图号连续（1,2,3... 无跳号）
     2. 正文引用的每个图号都登记在图契约清单里（防"提到图 3 却没有图 3"）
-    3. 图契约每张图对应的 PNG 文件存在（防"有编号没图"）
+    2b 反向：登记的图要么被正文引用，要么被嵌入论文某节（图分丢失检测）
+    3. 每张图的 PNG 文件存在（防"有编号没图"）
+    4. 每张图的 `script` / `data_entrypoint` 按双布局能解析到（防"脚本放错目录/根本不存在"）
+
+    **路径语义（作图契约 §二，写死）**：
+    - `file`            —— 相对 `figures/`（如 `fig03_sensitivity_paramA.png`，不带 figures/ 前缀）
+    - `script`          —— 相对项目根（如 `figures/scripts/fig03_sensitivity_paramA.py`）
+    - `data_entrypoint` —— 相对项目根（如 `figures/data/fig03_sensitivity_paramA.json`）
+    三者一律正斜杠；解析时反斜杠值先归一化（`normalize_figure_path`），
+    再走 `resolve_figure_entry` 的双布局（分层 → 扁平 → 两处都不存在即 FAIL）。
 
     由 run_pipeline 渲染论文后调用；issues 列入人工审核方向，不阻断（demo 无图属正常）。
     """
@@ -269,30 +308,41 @@ def verify_figure_references(paper, figures_dir="figures", manifest_name="figure
     if numbers != list(range(1, len(numbers) + 1)):
         issues.append(f"图号不连续：{numbers}（应为 1..{len(numbers)}）")
 
-    # 2 正文引用的图号都登记在契约里（用 _body_text，排除图题 caption 自证）
+    # 2 正文引用的图号都登记在契约里（用 _body_text，排除图题 caption 自证，A3）
     cited = sorted({int(n) for n in re.findall(r"图\s*(\d+)", _body_text(paper))})
     known = set(numbers)
     for n in cited:
         if n not in known:
             issues.append(f"正文引用图 {n} 但图契约清单无此图")
-    # 2b 反向：契约登记的图要么被正文文字引用，要么被嵌入论文某节（图分丢失检测）。
+    # 2b 反向（F1-01）：契约登记的图要么被正文文字引用，要么被嵌入论文某节（图分丢失检测）。
     # 嵌入节（sections[].images 的 path 对应契约 file）即"图进了论文"；
-    # 不要求正文逐字写"图N"（曾用自动灌引用伪造正文引用，已撤销）。
+    # 不要求正文逐字写"图N"（v2.4 A：曾用自动灌引用伪造正文引用，已撤销）。
     embedded = {Path(img.get("path", "")).name
                 for s in paper.get("sections", []) for img in s.get("images", [])}
     for m in manifest:
         n = _no_num(m)
         if n is None:
             continue
-        fname = m.get("file") or f"{m.get('no')}.png"
-        if n not in cited and fname not in embedded:
+        fname = normalize_figure_path(m.get("file")) or f"{m.get('no')}.png"
+        if n not in cited and Path(fname).name not in embedded:
             issues.append(f"图契约登记图 {n} 未被正文引用也未嵌入论文（图分丢失风险）")
 
-    # 3 每张图文件存在
+    # 3 每张图 PNG 存在（file 相对 figures/）
     for m in manifest:
-        fname = m.get("file") or f"{m.get('no')}.png"
-        if not (fig_dir / fname).exists():
+        fname = normalize_figure_path(m.get("file")) or f"{m.get('no')}.png"
+        if not (fig_dir / fname).is_file() and resolve_figure_entry(
+                fig_dir, fname, f"{m.get('no')}.png", root_relative=False) is None:
             issues.append(f"图 {m.get('no')} 文件缺失：figures/{fname}")
+
+    # 4 脚本/数据入口按双布局解析（C5：分层 → 扁平 → 两处都不存在 = FAIL，放错目录必须抓到）
+    for m in manifest:
+        for key, default, subdir, label in (("script", f"{m.get('no')}.py", "scripts", "绘图脚本"),
+                                            ("data_entrypoint", f"{m.get('no')}.json", "data", "数据入口")):
+            value = normalize_figure_path(m.get(key)) or default
+            if resolve_figure_entry(fig_dir, m.get(key), default, subdir) is None:
+                issues.append(
+                    f"图 {m.get('no')} {label}放错目录或缺失：{value}"
+                    f"（应相对项目根，如 figures/{subdir}/{Path(value).name}；分层与扁平两处都不存在）")
     return issues
 
 

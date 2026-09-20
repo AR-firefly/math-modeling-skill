@@ -58,12 +58,53 @@ def test_paper_text_excludes_bibliography_but_includes_table_notes():
     assert "成本" in body and "条件固定" in body and "附录说明" in body
 
 
-def test_demo_figure_has_rebuild_script_and_data(tmp_path):
-    manifest,_=run_all.plot_and_register_figures({"Q1.cost":100.0},str(tmp_path))
+def test_demo_figure_has_rebuild_script_and_data(tmp_path, monkeypatch):
+    """C6：demo 图函数改名 `_demo_plot_and_register_figures`，只在 --demo 调用。
+
+    demo 用扁平布局（figures/figN.py|json|png），正是双布局兼容要保住的既有形态；
+    函数跑完即自写 reproduced（C3 状态机）。
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "results").mkdir()
+    (tmp_path / "results/results.json").write_text('{"Q1_cost": 100.0}', encoding="utf-8")
+    manifest,_=run_all._demo_plot_and_register_figures({"Q1.cost":100.0},str(tmp_path))
     figures=json.loads(Path(manifest).read_text(encoding="utf-8"))
     assert figures and figures[0].get("script") and figures[0].get("data_entrypoint")
     assert Path(figures[0]["script"]).is_file()
     assert Path(figures[0]["data_entrypoint"]).is_file()
+    # v3.0：data_binding 必填 + 状态机自写 reproduced + artifact_hash 三元组
+    assert figures[0]["data_binding"]["results_path"] == "results/results.json"
+    assert figures[0]["evidence_status"] == "reproduced"
+    assert len(figures[0]["artifact_hash"]) == 64
+
+
+def test_real_path_has_no_demo_figure_function():
+    """C6：真实路径不得调用画图函数——公开名已不存在，只剩 demo 私有名。"""
+    assert not hasattr(run_all, "plot_and_register_figures")
+    assert callable(run_all._demo_plot_and_register_figures)
+
+
+def test_run_all_generated_figures_are_detected(tmp_path):
+    """C6 守卫：真实路径检测到 figures 由 run_all 演示模板生成时报警。"""
+    (tmp_path / "figures").mkdir()
+    (tmp_path / "figures/fig1.py").write_text(
+        "# " + run_all._DEMO_FIGURE_MARKER + "\nprint(1)\n", encoding="utf-8")
+    (tmp_path / "figures/fig2.py").write_text("print(2)\n", encoding="utf-8")
+    found = run_all.detect_run_all_generated_figures(str(tmp_path / "figures"))
+    assert found == ["figures/fig1.py"]
+
+
+def test_audit_figure_registry_flags_missing_binding_and_misplaced(tmp_path):
+    """C6：真实路径只做契约登记校验——缺 data_binding / 放错目录都要报出。"""
+    figdir = tmp_path / "figures"
+    figdir.mkdir()
+    (figdir / "figures_manifest.json").write_text(json.dumps([{
+        "no": "fig1", "file": "fig1.png",
+        "script": "figures/scripts/fig1.py", "data_entrypoint": "figures/data/fig1.json"}]),
+        encoding="utf-8")
+    issues = run_all.audit_figure_registry(str(figdir))
+    assert any("data_binding" in i for i in issues)
+    assert sum("放错目录或缺失" in i for i in issues) == 2
 
 
 def test_criteria_are_frozen_at_first_publication(tmp_path):
@@ -115,7 +156,7 @@ def test_stage2_persists_final_evidence_and_risk_scope(tmp_path, monkeypatch):
              "original_url":"https://example.org/paper","purpose":"model","verification_note":"Test fixture only"}]}
     state=run_all.run_pipeline(problem,data,meta,stage="stage2",solver=solver,prepare=prepare)
     assert state["status"] == "final_awaiting_review"
-    for name in ("paper.json","paper.tex","paper.docx","claims.json","source_evidence.json","non_result_numbers.json","risk_points.md"):
+    for name in ("paper.json","paper.tex","claims.json","source_evidence.json","non_result_numbers.json","risk_points.md"):
         assert (tmp_path/"output"/name).is_file(),name
     assert (tmp_path/"results/_code_map.json").is_file()
     assert "未进行" in (tmp_path/"output/risk_points.md").read_text(encoding="utf-8")

@@ -88,7 +88,7 @@ _PAIR = r"\((?:[^()]|\([^()]*\))*\)"
 def explicit_font_sizes(source: str) -> list[float]:
     # 只查"正文/轴标签级"字号（rcParams 与 axes 标签设置）：
     # 剔除图内局部标注（clabel 等值线/text 数据标注/annotate/set_xticklabels 等），
-    # 它们 8-9pt 在 300dpi 下可读，属正常设计，不该当正文字号误报。
+    # 它们 8-9pt 在 300dpi 下可读，属正常设计，不该当正文字号误报（E2-01）。
     cleaned = re.sub(r"(?:clabel|text|annotate|set_xticklabels|set_yticklabels)" + _PAIR,
                      "", source)
     return [float(v) for v in re.findall(
@@ -175,17 +175,216 @@ def check_log_guards(source: str) -> Finding:
     return finding("LOG-GUARD", "WARN", "对数变换无正性防护（数据含 0/负会 NaN）", log_hits)
 
 
+def _contract_block(source: str) -> dict | None:
+    """提取脚本内 CONTRACT 块（作图契约 §四，纯字面 dict）。解析失败返回 None。
+
+    用括号配平扫描而非正则取到第一个 `\\n}`：单行写法 `CONTRACT = {...}` 与
+    多行嵌套写法都能吃下，避免"格式合法却报解析失败"的误报。
+    """
+    match = re.search(r"(?m)^CONTRACT\s*=\s*", source)
+    if not match:
+        return None
+    start = source.find("{", match.end())
+    if start < 0 or source[match.end():start].strip():
+        return None
+    depth, quote, index = 0, None, start
+    while index < len(source):
+        char = source[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char in "{[(":
+            depth += 1
+        elif char in "}])":
+            depth -= 1
+            if depth == 0:
+                break
+        index += 1
+    if depth != 0:
+        return None
+    try:
+        value = ast.literal_eval(source[start:index + 1])
+    except (ValueError, SyntaxError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def check_data_binding(source: str, source_path: Path | None = None) -> Finding:
+    """作图契约 §四：数据图须能机检数值（results_path + bindings）；示意图显式声明 kind。"""
+    contract = _contract_block(source)
+    if contract is None:
+        return finding("CONTRACT-BINDING", "FAIL",
+                       "未找到可解析的 CONTRACT 块（作图契约 §四：须含 fig_id + data_binding + plot_calls）")
+    binding = contract.get("data_binding")
+    if not isinstance(binding, dict):
+        return finding("CONTRACT-BINDING", "FAIL", "CONTRACT 缺 data_binding（机检新增必填字段）")
+    kind = binding.get("kind", "data")
+    if kind == "schematic":
+        return finding("CONTRACT-BINDING", "PASS", "示意图显式声明 kind=schematic，豁免数值比对（作图契约 §一）")
+    path = binding.get("results_path")
+    if not isinstance(path, str) or not path.strip():
+        return finding("CONTRACT-BINDING", "FAIL", "data_binding 缺 results_path（q1: results/q1_results.json）")
+    allowed = ("results/q1_results.json", "results/results.json")
+    if path.replace("\\", "/").strip() not in allowed:
+        return finding("CONTRACT-BINDING", "FAIL",
+                       f"results_path 不在契约限定来源内：{path}（只认 {allowed[0]} / {allowed[1]}）")
+    if not isinstance(binding.get("bindings"), dict) or not binding["bindings"]:
+        return finding("CONTRACT-BINDING", "FAIL", "data_binding.bindings 为空（须声明 绘图参数名 → results 键名）")
+    return finding("CONTRACT-BINDING", "PASS",
+                   f"data_binding 齐全（{path}，{len(binding['bindings'])} 条绑定）")
+
+
+_STATS_CALLS = {
+    "std": {"std", "nanstd"}, "var": {"var", "nanvar"},
+    "percentile": {"percentile"}, "quantile": {"quantile"}, "corrcoef": {"corrcoef"},
+    "scipy.stats": {"*"}, "scipy.optimize": {"curve_fit", "least_squares"},
+    "sklearn": {"fit", "predict"},
+}
+_STATS_ATTRS = {"std", "var", "percentile", "quantile", "corrcoef", "fit", "predict",
+                "curve_fit", "least_squares", "mode", "sem", "pearsonr", "spearmanr"}
+
+
+def _stats_targets(node: ast.AST, source: str) -> set[str]:
+    """AST 匹配统计/拟合调用（作图契约 §六）。返回命中描述集合。"""
+    hits: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        func = child.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name == "fit" and isinstance(func, ast.Attribute):
+            hits.add("sklearn .fit()")
+        elif name == "predict":
+            hits.add(".predict()")
+        elif name in _STATS_ATTRS:
+            # 裸名调用（`from numpy import std` 后直接 `std(...)`）时 func 是 ast.Name，
+            # 没有 .value 属性。此类同样命中统计禁令，须报出而非崩溃——
+            # 否则调用方拿到 AttributeError 而非判定结果（stage_gate 同输入不崩，两侧口径须一致）。
+            if isinstance(func, ast.Attribute):
+                root = func.value
+                root_name = root.attr if isinstance(root, ast.Attribute) else getattr(root, "id", "")
+                hits.add(f"{root_name + '.' if root_name else ''}{name}")
+            else:
+                hits.add(name)
+    # 动态绕过（getattr/eval/__import__）拿到的是同一被 patch 对象，运行时守卫仍生效；
+    # 但拼接字符串等路径 AST 抓不到——静态层只降概率（作图契约 §六 诚实说明）。
+    for m in re.finditer(r"\b(?:getattr|eval|exec)\s*\(\s*['\"](\w+)['\"]", source):
+        if m.group(1) in _STATS_ATTRS:
+            hits.add(f"dynamic:{m.group(1)}")
+    return hits
+
+
+def _stats_exempt(source: str) -> tuple[bool, list[str]]:
+    """`# STATS-EXEMPT: <理由>`：空理由 FAIL，非空降 WARN（作图契约 §六）。"""
+    exempts = re.findall(r"#[ \t]*STATS-EXEMPT:[ \t]*([^\n]*)", source)
+    meaningful = [item.strip() for item in exempts if item.strip()]
+    return bool(exempts), meaningful
+
+
+def check_no_statistical_inference(source: str, source_path: Path | None = None) -> Finding:
+    """作图契约 §六：作图脚本只做呈现，不做推断（统计量由编程手算好落盘）。"""
+    contract = _contract_block(source) or {}
+    declared = contract.get("statistical_exempt")
+    exempted = declared is not None and declared is not False
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return finding("NO-STATS", "FAIL", f"源码语法错误，无法做统计调用扫描：{exc.msg}")
+    hits = _stats_targets(tree, source)
+    if not hits:
+        return finding("NO-STATS", "PASS", "未发现统计推断/拟合调用")
+    has_exempt, reasons = _stats_exempt(source)
+    if exempted and declared:
+        return finding("NO-STATS", "WARN",
+                       f"CONTRACT.statistical_exempt 已声明，人工确认豁免范围：{sorted(hits)}", sorted(hits))
+    if has_exempt and not reasons:
+        return finding("NO-STATS", "FAIL",
+                       f"STATS-EXEMPT 理由为空（空理由 FAIL）：{sorted(hits)}", sorted(hits))
+    if has_exempt:
+        return finding("NO-STATS", "WARN",
+                       f"存在统计调用但已记录非空豁免理由（{reasons[0][:60]}），需人工确认：{sorted(hits)}",
+                       sorted(hits))
+    return finding("NO-STATS", "FAIL",
+                   f"脚本含统计推断/拟合调用，应由编程手算好落盘后再画：{sorted(hits)}", sorted(hits))
+
+
+def _entry_candidates(reference: str, source_path: Path | None) -> list[Path]:
+    """把脚本里引用的数据路径解析成候选本地文件（相对脚本、相对项目根、按名）。"""
+    if not reference or reference.startswith(("http://", "https://", "data:")):
+        return []
+    candidates: list[Path] = []
+    base = Path(reference)
+    if base.is_absolute():
+        candidates.append(base)
+    if source_path:
+        candidates.append(source_path.parent / base)
+        candidates.extend(parent / base for parent in list(source_path.parents)[:3])
+    candidates.append(Path.cwd() / base)
+    candidates.append(Path.cwd() / base.name)
+    return candidates
+
+
+def check_data_entrypoint(source: str, source_path: Path | None = None) -> Finding:
+    """作图契约 §三：脚本读取的数据入口必须真实存在（禁"跑起来才 404"）。"""
+    if source_path is None:
+        return finding("DATA-ENTRY", "WARN", "未提供脚本路径，无法核对数据入口是否落地")
+    refs = [ref for ref in re.findall(
+        r"(?:read_text|read_bytes|open|read_csv|json\.load|loads)\s*\(\s*(?:Path\s*\(\s*)?['\"]([^'\"\n]+)['\"]",
+        source) if re.search(r"\.(?:json|csv|txt|tsv|npy|npz|xlsx)$", ref, re.IGNORECASE)]
+    refs = [ref for ref in refs if not ref.startswith(".")]
+    if not refs:
+        # 用 CONTRACT.data_binding 兜底（数据入口可能由脚本自行落盘）
+        binding = (_contract_block(source) or {}).get("data_binding") or {}
+        data_path = binding.get("data_path") if isinstance(binding, dict) else None
+        if not data_path:
+            return finding("DATA-ENTRY", "WARN",
+                           "未发现显式数据文件引用，也未见 data_binding.data_path，需人工确认数据入口")
+        refs = [data_path]
+    missing = [ref for ref in refs
+               if not any(candidate.is_file() for candidate in _entry_candidates(ref, source_path))]
+    if missing:
+        return finding("DATA-ENTRY", "FAIL", f"数据入口不存在：{missing}", missing)
+    return finding("DATA-ENTRY", "PASS", f"数据入口存在（{refs}）")
+
+
+def check_script_runnable(source: str, source_path: Path | None = None) -> Finding:
+    """作图契约 §三：脚本可独立运行——语法可解析 + `__file__` 相对定位（禁 cwd/绝对路径）。"""
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        return finding("SCRIPT-RUNNABLE", "FAIL", f"脚本语法错误，无法独立运行：{exc.msg}")
+    located = bool(re.search(r"__file__", source))
+    absolute = re.findall(r"['\"](?:[A-Za-z]:[\\/]|/home/|/Users/|/mnt/)[^'\"]*['\"]", source)
+    if absolute:
+        return finding("SCRIPT-RUNNABLE", "FAIL",
+                       f"脚本含本机绝对路径，换机器必挂：{absolute[:3]}", absolute[:3])
+    if not located:
+        return finding("SCRIPT-RUNNABLE", "FAIL",
+                       "脚本未用 __file__ 相对定位（作图契约 §二硬性规范：空 cwd 独立运行必挂）")
+    return finding("SCRIPT-RUNNABLE", "PASS", "语法通过且使用 __file__ 相对定位")
+
+
 CHECKS: tuple[Callable[[str], Finding], ...] = (
     check_syntax, check_cn_font, check_font_sizes, check_colormaps,
     check_png_export, check_resolution, check_sampling, check_exclusions,
     check_demo_data, check_log_guards,
+    check_script_runnable, check_data_entrypoint, check_data_binding,
+    check_no_statistical_inference,
 )
+
+# 需要脚本路径做文件系统核对的检查（其余只吃源码字符串）
+_PATH_AWARE = (check_cn_font, check_script_runnable, check_data_entrypoint, check_data_binding)
 
 
 def validate_source(source: str, source_path: Path | None = None) -> list[Finding]:
     findings = []
     for check in CHECKS:
-        if check is check_cn_font:
+        if check in _PATH_AWARE:
             findings.append(check(source, source_path))
         else:
             findings.append(check(source))
@@ -215,16 +414,26 @@ def render_text(path: Path, findings: list[Finding], strict: bool) -> str:
     return "\n".join(lines)
 
 
-def run_self_tests() -> None:
-    good = '''
+GOOD_SAMPLE = '''
+import json
+from pathlib import Path
 import matplotlib as mpl
 mpl.rcParams.update({"font.sans-serif": ["SimHei"], "font.size": 11})
 import matplotlib.pyplot as plt
+
+CONTRACT = {
+    "fig_id": "fig1",
+    "data_binding": {"results_path": "results/q1_results.json", "bindings": {"y": "Q1_cost"}},
+    "plot_calls": [{"method": "bar", "data_params": ["x", "y"], "aux_params": ["x_labels"]}],
+}
+
+record = json.loads(open("figures/data/fig1.json", encoding="utf-8").read())
 fig, ax = plt.subplots()
-ax.plot([1,2,3])
-fig.savefig("figures/fig1.png", dpi=300)
+ax.plot([1, 2, 3], record["y"])
+fig.savefig(Path(__file__).with_suffix(".png"), dpi=300)
 '''
-    bad = '''
+
+BAD_SAMPLE = '''
 import numpy as np
 import matplotlib.pyplot as plt
 x = np.random.choice(np.random.normal(size=100), 12)
@@ -232,13 +441,79 @@ fig, ax = plt.subplots()
 ax.imshow(np.zeros((3,3)), cmap="jet")
 fig.savefig("figures/fig1.png", dpi=72)
 '''
-    good_f = {r.check_id: r for r in validate_source(good)}
-    assert all(f.level == "PASS" for f in good_f.values() if f.check_id != "EXPORT-PNG"), \
-        [f"{k}:{v.level}" for k, v in good_f.items() if v.level == "FAIL"]
-    bad_f = {r.check_id: r for r in validate_source(bad)}
-    for cid in ("CN-FONT", "COLOR-MAP", "RASTER-DPI"):
-        assert bad_f[cid].level == "FAIL", (cid, bad_f[cid].level)
-    assert bad_f["FONT-SIZE"].level == "WARN", "bad 样例未设字号应为 WARN"
+
+STATS_SAMPLE = '''
+import json
+from pathlib import Path
+import numpy as np
+import matplotlib as mpl
+mpl.rcParams.update({"font.sans-serif": ["SimHei"], "font.size": 11})
+import matplotlib.pyplot as plt
+
+CONTRACT = {"fig_id": "fig1", "data_binding": {"results_path": "results/q1_results.json",
+            "bindings": {"y": "Q1_cost"}}}
+record = json.loads(open("figures/data/fig1.json", encoding="utf-8").read())
+fig, ax = plt.subplots()
+band = np.std(record["y"])
+ax.errorbar([1, 2], record["y"][:2], yerr=band)
+fig.savefig(Path(__file__).with_suffix(".png"), dpi=300)
+'''
+
+
+def _levels(source: str, path: Path | None = None) -> dict[str, str]:
+    return {r.check_id: r.level for r in validate_source(source, path)}
+
+
+def run_self_tests() -> None:
+    """自测：正例全 PASS、反例逐项命中（含 v3.0 新增 4 项与反例注入）。"""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="validate_figures_selftest_") as temp:
+        project = Path(temp)
+        (project / "figures/scripts").mkdir(parents=True)
+        (project / "figures/data").mkdir(parents=True)
+        (project / "figures/data/fig1.json").write_text('{"y": [1, 2, 3]}', encoding="utf-8")
+        script = project / "figures/scripts/fig1.py"
+        script.write_text(GOOD_SAMPLE, encoding="utf-8")
+
+        good_f = {r.check_id: r for r in validate_source(GOOD_SAMPLE, script)}
+        bad_levels = [f"{k}:{v.level}" for k, v in good_f.items() if v.level != "PASS"]
+        assert not bad_levels, bad_levels
+
+        # 反例 1：无 CONTRACT / 无 __file__（放错目录型脚本）
+        loose = good_f["SCRIPT-RUNNABLE"]
+        assert loose.level == "PASS"
+        no_contract = _levels('import matplotlib.pyplot as plt\nplt.savefig("a.png", dpi=300)\n')
+        assert no_contract["CONTRACT-BINDING"] == "FAIL", no_contract
+        assert no_contract["SCRIPT-RUNNABLE"] == "FAIL", no_contract
+
+        # 反例 2：统计调用（AST）
+        stats = _levels(STATS_SAMPLE, script)
+        assert stats["NO-STATS"] == "FAIL", stats
+        exempt = STATS_SAMPLE.replace(
+            "band = np.std(record[\"y\"])",
+            "# STATS-EXEMPT:\nband = np.std(record[\"y\"])")
+        assert _levels(exempt, script)["NO-STATS"] == "FAIL", "空理由 STATS-EXEMPT 必须 FAIL"
+        exempt = STATS_SAMPLE.replace(
+            "band = np.std(record[\"y\"])",
+            "# STATS-EXEMPT: 仅做稳健区间裁剪，不进结论\nband = np.std(record[\"y\"])")
+        assert _levels(exempt, script)["NO-STATS"] == "WARN", "非空理由应降 WARN"
+
+        # 反例 3：数据入口不存在 / results_path 越出契约限定来源
+        missing = GOOD_SAMPLE.replace("figures/data/fig1.json", "figures/data/nowhere.json")
+        assert _levels(missing, script)["DATA-ENTRY"] == "FAIL", "数据入口缺失必须 FAIL"
+        wrong_source = GOOD_SAMPLE.replace("results/q1_results.json", "figures/fig1.json")
+        assert _levels(wrong_source, script)["CONTRACT-BINDING"] == "FAIL", "越出限定来源必须 FAIL"
+
+        # 反例 4：本机绝对路径
+        absolute = GOOD_SAMPLE.replace('open("figures/data/fig1.json"',
+                                       'open("C:/Users/someone/data/fig1.json"')
+        assert _levels(absolute, script)["SCRIPT-RUNNABLE"] == "FAIL", "绝对路径必须 FAIL"
+
+        # 原有反例：配色 / DPI / 字号
+        bad = _levels(BAD_SAMPLE, project / "figures/scripts/bad.py")
+        for cid in ("CN-FONT", "COLOR-MAP", "RASTER-DPI"):
+            assert bad[cid] == "FAIL", (cid, bad[cid])
+        assert bad["FONT-SIZE"] == "WARN", "bad 样例未设字号应为 WARN"
     print("validate_figures.py self-test: PASS")
 
 
@@ -253,6 +528,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Windows 默认控制台是 GBK(cp936)；输出一旦含替换字符或 ✓ 类符号，print 就会抛
+    # UnicodeEncodeError 并以非零退出码收场——与「检查未通过」不可区分。
+    # 其余入口脚本(run_all/stage_gate/gate_audit/...)均有此守卫，本脚本此前漏装。
+    if getattr(sys.stdout, "reconfigure", None):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if getattr(sys.stderr, "reconfigure", None):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     if args.self_test:
         run_self_tests()
         return 0

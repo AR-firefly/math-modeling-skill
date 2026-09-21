@@ -35,7 +35,11 @@ def _load_results(results_json):
 
 
 def _all_numbers(results, prefix=""):
-    """递归提取 results 全部数值 → [(字段路径, 值)]。"""
+    """递归提取 results 全部数值 → [(字段路径, 值)]。
+
+    注意：`verify.py` 另有一份同名实现，**不要合并**——本份不跳元键（调用方要拿
+    全量再按 Q 号正则分组）、只处理 dict；verify 那份会跳过下划线元键与 seed。
+    """
     out = []
     for k, v in results.items():
         p = f"{prefix}.{k}" if prefix else k

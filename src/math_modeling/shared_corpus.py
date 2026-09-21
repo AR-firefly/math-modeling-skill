@@ -29,7 +29,8 @@ ENV_VAR = "MM_SHARED_PAPERS"
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 
 # 默认值由 SKILL_ROOT 推导（不是本机绝对路径字面量）：
-# v2.0 与 v3.0 同属 “数学建模skill升级/” 目录。
+# 约定：v2.0 与 v3.0 位于同一父目录（本仓库开发时的布局）。
+# 公开分发后该约定通常不成立——请用环境变量 MM_SHARED_PAPERS 指向实际语料目录。
 _DEFAULT_SHARED_PAPERS = (SKILL_ROOT.parent / "math-modeling-skill-v2.0"
                           / "references" / "优秀论文")
 
@@ -39,7 +40,11 @@ SHARED_PAPERS_DIR = Path(os.environ.get(ENV_VAR) or _DEFAULT_SHARED_PAPERS)
 
 
 class SharedCorpusMissing(RuntimeError):
-    """共享语料目录缺失（或不可用）——入口应据此报错退出，不得降级静默继续。"""
+    """共享语料目录缺失（或不可用）——由调用方决定处理方式。
+
+    `require_shared_papers()` 抛此异常，供需要强校验的调用方使用；
+    入口 `run_all` 不强制调用——缺失时降级（参考文献比对跳过，并在 `output/risk_points.md` 写明未比对），不阻断整条流程。
+    """
 
 
 def resolve_shared_papers_dir(env: dict | None = None) -> Path:

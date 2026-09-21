@@ -30,7 +30,7 @@
 -----------------------------
 monkeypatch **必须早于目标脚本 import matplotlib**。本文件在 patch 安装前**不 import
 matplotlib**（`_install_patches()` 只碰 numpy/scipy/stdlib），因此当目标脚本执行
-`matplotlib.use("Agg")`（`visualizer.py:26` import 时锁定后端）时，patch 早已生效。
+`matplotlib.use("Agg")`（`visualizer.py` 顶层 import 时锁定后端）时，patch 早已生效。
 自检用例 `patch_order` 会实测断言这一点。
 
 绕过面（诚实说明）

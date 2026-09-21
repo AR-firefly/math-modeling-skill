@@ -7,7 +7,7 @@
 **画进图里的数组，逐个值是否等于 `results/` 里的数？**
 
 不是「脚本的 dict 里有没有这个键」（那可以造），也不是「`figures/data/*.json` 与
-`results.json` 是否相等」（那本就靠复制，见 `run_all.py:155-164` 的 demo 模式，
+`results.json` 是否相等」（那本就靠复制，见 `run_all.py` 的 `_demo_plot_and_register_figures()`，
 比对恒真 = 假验收）。这里 monkeypatch matplotlib，捕获**实际传给绘图函数的入参**，
 再经脚本 CONTRACT 的 `data_binding.bindings` 解析回 results 键值逐值比对。
 
@@ -30,7 +30,7 @@ text / scatter / hist / imshow / contour / contourf / barh(含 xerr) / pcolormes
 - `aux_params` → 排除比对（刻度、类别标签、轨迹坐标）
 - **未声明的入参 → WARN 列出（不静默放过）**，`--strict` 视为 FAIL
 
-> 为什么右值不写「脚本 dict 键」：`visualizer.py:212` 读 `d["err"]`，但 `:213` 传给
+> 为什么右值不写「脚本 dict 键」：`visualizer.py` 的 `_errorbar()` 读 `d["err"]`，传给
 > matplotlib 时形参叫 `yerr=`——**捕获侧只看得到 `yerr`**。以捕获侧命名为准，冲突消失。
 
 ### 实跑后追加的三处最小扩展（不替换两段口径，只补「同名/多人参」这一档）

@@ -29,7 +29,12 @@ _SKIP_KEYS = ("seed",)
 
 
 def _all_numbers(results, prefix="", include_skipped=False):
-    """递归提取 results 全部数值字段，返回 [(字段路径, 值)]。默认跳过元键与复现键。"""
+    """递归提取 results 全部数值字段，返回 [(字段路径, 值)]。默认跳过元键与复现键。
+
+    注意：`paper_generator.py` 另有一份同名实现，**不要合并**——那份不跳元键
+    （调用方要拿全量再按 Q 号正则分组）且只处理 dict；本份支持 list/tuple，
+    并可用 include_skipped=True 取回元键。
+    """
     out = []
     if isinstance(results, dict):
         for k, value in results.items():

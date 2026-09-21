@@ -1,7 +1,7 @@
 """E / 批次 2 —— 作图脚本统计禁令：**运行时守卫**单测（作图契约 §六 第二层）。
 
 覆盖出口条件 3：**monkeypatch 必须早于 `matplotlib.use("Agg")`**
-（`visualizer.py:26` 在 import 时锁后端）——本文件用实测报告字段
+（`visualizer.py` 顶层在 import 时锁后端）——本文件用实测报告字段
 `install.matplotlib_preloaded is False` 断言这一点，而不是只断言「函数存在」。
 
 覆盖出口条件 2 的运行时面：`getattr` / `eval` / `__import__` 动态写法**绕不过**

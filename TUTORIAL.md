@@ -190,7 +190,7 @@ meta同时提供：
 - `claims`：实际结果声明列表，含path、text、label、value、unit、expected_unit；派生量按实际计算给scale/offset和derivation。标签、单位及数字必须对应实际论文。
 - `non_result_numbers`：每项text、kind（year/index/constant/citation/unit/input）、reason，解释非结果数字，不用它掩盖未映射的实验结果。
 - `source_evidence`：与参考文献同序，每项status、publisher、original_url、purpose、original_source、verification_note；真实核验后才能填verified与true。
-- `selected_papers`：相对**共享语料目录**（`SHARED_PAPERS_DIR`，可用环境变量 `MM_SHARED_PAPERS` 覆盖；语料保留在 v2.0 目录、不在本仓库）的已选UTF-8文本文件路径列表，不允许越界或扫描占位文本；实际阅读全文及页码证据另记，文本相似检查不等于全文质量审查。
+- `selected_papers`：相对**共享语料目录**（`SHARED_PAPERS_DIR`，可用环境变量 `MM_SHARED_PAPERS` 覆盖；语料需自备、不在本仓库）的已选UTF-8文本文件路径列表，不允许越界或扫描占位文本；实际阅读全文及页码证据另记，文本相似检查不等于全文质量审查。
 
 没有meta.paper只保存计算待审状态，不能声称全文完成。pipeline最多生成final_awaiting_review；完成全部质量改进、渲染、复现和固定双审后再交付。AI声明/详情正文保持空白，人工事项不由AI伪造完成。
 

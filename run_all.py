@@ -22,7 +22,7 @@ if os.path.isdir(os.path.join(ROOT, "src")):
     sys.path.insert(0, os.path.join(ROOT, "src"))
 try:
     from math_modeling import (
-        ProcessRecorder, DataCleaner, Visualizer, sensitivity_scan, strategy_reason,
+        ProcessRecorder, DataCleaner, Visualizer,
         build_paper_content, verify_paper_numbers, write_run_manifest, build_provenance,
         plagiarism_risk_review, render_risk_points, render_tex, validate_references,
         verify_figure_references, verify_citations,
@@ -32,7 +32,7 @@ try:
 except ImportError:
     sys.path.insert(0, os.path.join(ROOT, "src"))
     from math_modeling import (
-        ProcessRecorder, DataCleaner, Visualizer, sensitivity_scan, strategy_reason,
+        ProcessRecorder, DataCleaner, Visualizer,
         build_paper_content, verify_paper_numbers, write_run_manifest, build_provenance,
         plagiarism_risk_review, render_risk_points, render_tex, validate_references,
         verify_figure_references, verify_citations,

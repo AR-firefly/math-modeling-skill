@@ -17,9 +17,9 @@
 
 `results/q1_results.json` 的语义（同名三义，别读错）
 --------------------------------------------------
-- `workflow.py:70`：**Q1 的权威产物**就是 `results/q1_results.json`
-- `run_all.py:429`：`results/results.json` 要到 `run_pipeline` **末尾**才写
-- `workflow.py:95`：`publish_q1` 把 q1_results.json 复制进快照并**改名**为 `results.json`
+- `workflow.py` 的 `publish_q1()`：**Q1 的权威产物**就是 `results/q1_results.json`
+- `run_all.py` 的 `run_pipeline()`：`results/results.json` 要到**末尾**才写
+- `workflow.py` 的 `publish_q1()`：把 q1_results.json 复制进快照并**改名**为 `results.json`
 所以 **q1 阶段明确读 `q1_results.json`**，`final` 阶段才读 `results.json`。
 
 与 `workflow.py` 的边界（硬约束）
